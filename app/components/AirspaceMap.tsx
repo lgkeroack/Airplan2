@@ -690,7 +690,11 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <button
-                    onClick={() => setIsPanelOpen(true)}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setIsPanelOpen(true)
+                    }}
                     style={{
                       width: '100%',
                       padding: '8px 10px',
