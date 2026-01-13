@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useMemo, useEffect } from 'react'
-import type { AirspaceData } from '@/lib/load-airspace-data'
+import type { AirspaceData } from '@/lib/airspace-processing'
 import { findAirspacesAtPoint } from '@/lib/point-in-airspace'
 
 interface Layer {

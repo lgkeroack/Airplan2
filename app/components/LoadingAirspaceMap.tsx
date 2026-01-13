@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic'
 import AirspaceMap from './AirspaceMap'
 import ParsingProgress from './ParsingProgress'
 import { loadAirspaceDataWithProgress } from '@/lib/parse-with-progress'
-import type { AirspaceData } from '@/lib/load-airspace-data'
+import type { AirspaceData } from '@/lib/airspace-processing'
 import type { ParseProgress } from '@/lib/parse-with-progress'
 import type { AirspaceFile } from '@/lib/load-airspace-files'
 
@@ -25,7 +25,7 @@ export default function LoadingAirspaceMap({ initialFiles = [] }: LoadingAirspac
     async function loadData() {
       try {
         console.log('LoadingAirspaceMap: Starting to parse airspace data...', { fileCount: initialFiles?.length || 0 })
-        
+
         if (!initialFiles || initialFiles.length === 0) {
           console.error('LoadingAirspaceMap: No files provided')
           setProgress({
@@ -35,7 +35,7 @@ export default function LoadingAirspaceMap({ initialFiles = [] }: LoadingAirspac
           setIsLoading(false)
           return
         }
-        
+
         setProgress({
           progress: 0,
           status: `Starting to parse ${initialFiles.length} file(s)...`,
@@ -92,11 +92,11 @@ export default function LoadingAirspaceMap({ initialFiles = [] }: LoadingAirspac
 
   if (airspaceData.length === 0) {
     return (
-      <div style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        height: '100vh', 
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: '100vh',
         backgroundColor: '#111827',
         color: 'white',
         fontFamily: 'monospace'

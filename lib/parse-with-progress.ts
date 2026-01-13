@@ -1,7 +1,7 @@
 // Wrapper for parsing with progress tracking
 
 import { parseOpenAirFile, convertToApiFormat } from './openair-parser'
-import type { AirspaceData } from './load-airspace-data'
+import type { AirspaceData } from './airspace-processing'
 
 export interface ParseProgress {
   progress: number // 0-100
@@ -29,7 +29,7 @@ export async function parseOpenAirFileWithProgress(
 
   // Allow UI to update
   await new Promise(resolve => setTimeout(resolve, 50))
-  
+
   if (onProgress) {
     onProgress({
       progress: 10,
@@ -43,7 +43,7 @@ export async function parseOpenAirFileWithProgress(
 
   // Parse the file (this is synchronous but may take time)
   const parsed = parseOpenAirFile(content, source)
-  
+
   if (onProgress) {
     onProgress({
       progress: 60,
@@ -58,7 +58,7 @@ export async function parseOpenAirFileWithProgress(
 
   // Convert to API format
   const converted = convertToApiFormat(parsed, source)
-  
+
   if (onProgress) {
     onProgress({
       progress: 100,
