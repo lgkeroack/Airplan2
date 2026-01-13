@@ -424,12 +424,14 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     const nLat = Number(lat.toFixed(6))
     const nLon = Number(lon.toFixed(6))
 
-    // Check if we already have this point to avoid resetting everything on accidental double clicks
-    if (clickedPoint && clickedPoint.lat === nLat && clickedPoint.lon === nLon) {
-      return
-    }
-
-    setClickedPoint({ lat: nLat, lon: nLon })
+    // Use a temporary variable to check against current state to avoid 
+    // unnecessary state updates if the point is essentially the same.
+    setClickedPoint(prev => {
+      if (prev && prev.lat === nLat && prev.lon === nLon) {
+        return prev
+      }
+      return { lat: nLat, lon: nLon }
+    })
 
     // Batch simple state resets
     setIsPanelOpen(false)
@@ -448,7 +450,7 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
       })
       .catch(err => console.error('Elevation fetch error:', err))
       .finally(() => setIsElevationLoading(false))
-  }, [clickedPoint])
+  }, []) // Empty dependency array makes this function PERMANENTLY stable
 
   // Handle airspace selection from side panel
   const handleAirspaceSelect = useCallback((ids: string | string[]) => {
