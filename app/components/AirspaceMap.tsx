@@ -5,7 +5,7 @@ import L, { LatLngExpression, Map as LeafletMap } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import SidePanel from './SidePanel'
-import type { AirspaceData } from '@/lib/load-airspace-data'
+import type { AirspaceData } from '@/lib/airspace-processing'
 import { validateOpenAirFile } from '@/lib/validate-openair'
 import { findAirspacesAtPoint } from '@/lib/point-in-airspace'
 
@@ -176,6 +176,7 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
   const [selectedAirspaceId, setSelectedAirspaceId] = useState<string | string[] | null>(null)
   const [elevation, setElevation] = useState<number | null>(null)
   const [isElevationLoading, setIsElevationLoading] = useState(false)
+  const lastClickRef = useRef<{ lat: number; lon: number; time: number } | null>(null)
 
   // Layer management
   const [layers, setLayers] = useState<Layer[]>([
@@ -424,6 +425,17 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     const nLat = Number(lat.toFixed(6))
     const nLon = Number(lon.toFixed(6))
 
+    // Click guard: Prevent double-processing of the same event 
+    // (e.g., when both a polygon and the map trigger a click)
+    const now = Date.now()
+    if (lastClickRef.current &&
+      now - lastClickRef.current.time < 150 &&
+      Math.abs(lastClickRef.current.lat - nLat) < 0.0001 &&
+      Math.abs(lastClickRef.current.lon - nLon) < 0.0001) {
+      return
+    }
+    lastClickRef.current = { lat: nLat, lon: nLon, time: now }
+
     // Use a temporary variable to check against current state to avoid 
     // unnecessary state updates if the point is essentially the same.
     setClickedPoint(prev => {
@@ -436,10 +448,10 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     // Batch simple state resets
     setIsPanelOpen(false)
     setSelectedAirspaceId(null)
+    setIsElevationLoading(true)
     setElevation(null)
 
     // Fetch elevation for this spot
-    setIsElevationLoading(true)
     fetch(`https://api.open-elevation.com/api/v1/lookup?locations=${nLat},${nLon}`)
       .then(res => res.json())
       .then(data => {
@@ -488,6 +500,12 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
       }
     }
   }, [allAirspaces, isPanelOpen])
+
+  // Memoize popup position to prevent flickering when elevation data loads
+  const popupPosition = useMemo(() => {
+    if (!clickedPoint) return null
+    return [Number(clickedPoint.lat.toFixed(6)), Number(clickedPoint.lon.toFixed(6))] as LatLngExpression
+  }, [clickedPoint])
 
   return (
     <div style={{ height: '100%', width: '100%', position: 'relative' }}>
@@ -580,19 +598,6 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
                     fillOpacity: isSelected ? 0.6 : fillOpacity,
                     weight: isSelected ? 4 : 1.5,
                   }}
-                  eventHandlers={{
-                    click: (e) => {
-                      if (e.originalEvent) {
-                        e.originalEvent.stopPropagation()
-                      }
-                      // Special Leaflet stop propagation
-                      if ((e as any).originalEvent) {
-                        L.DomEvent.stopPropagation((e as any).originalEvent)
-                      }
-                      const { lat, lng } = e.latlng
-                      handleMapClick(lat, lng)
-                    }
-                  }}
                 />
               )
             }
@@ -617,19 +622,6 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
                     fillOpacity: isSelected ? 0.6 : fillOpacity,
                     weight: isSelected ? 4 : 1.5,
                   }}
-                  eventHandlers={{
-                    click: (e) => {
-                      if (e.originalEvent) {
-                        e.originalEvent.stopPropagation()
-                      }
-                      // Special Leaflet stop propagation
-                      if ((e as any).originalEvent) {
-                        L.DomEvent.stopPropagation((e as any).originalEvent)
-                      }
-                      const { lat, lng } = e.latlng
-                      handleMapClick(lat, lng)
-                    }
-                  }}
                 />
               )
             }
@@ -653,19 +645,6 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
                     fillOpacity: isSelected ? 0.6 : fillOpacity,
                     weight: isSelected ? 4 : 1.5,
                   }}
-                  eventHandlers={{
-                    click: (e) => {
-                      if (e.originalEvent) {
-                        e.originalEvent.stopPropagation()
-                      }
-                      // Special Leaflet stop propagation
-                      if ((e as any).originalEvent) {
-                        L.DomEvent.stopPropagation((e as any).originalEvent)
-                      }
-                      const { lat, lng } = e.latlng
-                      handleMapClick(lat, lng)
-                    }
-                  }}
                 />
               )
             }
@@ -675,10 +654,9 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         }, [allAirspaces, visibleTypes, mapBounds, layers, selectedAirspaceId, handleMapClick])}
 
         {/* Single Global Popup for performance - Hide if SidePanel is open */}
-        {clickedPoint && !selectedAirspaceId && (
+        {clickedPoint && !selectedAirspaceId && popupPosition && (
           <Popup
-            key="global-map-action-popup"
-            position={[clickedPoint.lat, clickedPoint.lon]}
+            position={popupPosition}
             autoPan={false}
             closeOnClick={false}
             eventHandlers={{
@@ -705,7 +683,7 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
                   <div style={{ fontSize: '13px', color: '#111827', fontWeight: 'bold' }}>
                     {clickedPoint.lat.toFixed(4)}°, {clickedPoint.lon.toFixed(4)}°
                   </div>
-                  <div style={{ fontSize: '13px', color: '#3b82f6', fontWeight: 'bold', marginTop: '2px' }}>
+                  <div style={{ fontSize: '13px', color: '#3b82f6', fontWeight: 'bold', marginTop: '2px', minHeight: '1.5em' }}>
                     {isElevationLoading ? 'Loading elevation...' : (elevation !== null ? `${Math.round(elevation * 3.28084)} ft | ${elevation} m MSL` : 'Elevation unavailable')}
                   </div>
                 </div>
@@ -733,31 +711,23 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
                     Retrieve airspace here
                   </button>
                   <button
-                    onClick={() => {
-                      console.log('Start drawing route - feature coming soon')
-                    }}
+                    disabled={true}
                     style={{
                       width: '100%',
                       padding: '8px 10px',
-                      backgroundColor: 'white',
-                      color: '#3b82f6',
-                      border: '2px solid #3b82f6',
+                      backgroundColor: '#f3f4f6',
+                      color: '#9ca3af',
+                      border: '2px solid #e5e7eb',
                       borderRadius: '6px',
                       fontSize: '12px',
                       fontWeight: 'bold',
-                      cursor: 'pointer',
+                      cursor: 'not-allowed',
                       transition: 'all 0.2s',
                       textTransform: 'uppercase',
                       letterSpacing: '0.02em'
                     }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = '#eff6ff'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = 'white'
-                    }}
                   >
-                    Start drawing route
+                    Start drawing route (Coming Soon)
                   </button>
                 </div>
               </div>
