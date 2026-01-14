@@ -1,7 +1,7 @@
 'use client'
 
-import { MapContainer, TileLayer, Circle, Polygon, Popup, useMap, useMapEvents, Rectangle } from 'react-leaflet'
-import L, { LatLngExpression, LatLngBoundsExpression, Map as LeafletMap } from 'leaflet'
+import { MapContainer, TileLayer, Circle, Polygon, Popup, useMap, useMapEvents } from 'react-leaflet'
+import L, { LatLngExpression, Map as LeafletMap } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import SidePanel from './SidePanel'
@@ -33,12 +33,16 @@ function MapClickHandler({
   onMapClick,
   setMapBounds,
   boundsUpdateTimerRef,
-  mapRef
+  mapRef,
+  onMouseMove,
+  onMouseOut
 }: {
   onMapClick: (lat: number, lon: number) => void,
   setMapBounds: (bounds: { north: number; south: number; east: number; west: number }) => void,
   boundsUpdateTimerRef: React.MutableRefObject<NodeJS.Timeout | null>,
-  mapRef: React.MutableRefObject<LeafletMap | null>
+  mapRef: React.MutableRefObject<LeafletMap | null>,
+  onMouseMove?: (lat: number, lon: number) => void,
+  onMouseOut?: () => void
 }) {
   const map = useMap()
 
@@ -62,6 +66,12 @@ function MapClickHandler({
   useMapEvents({
     click: (e) => {
       onMapClick(e.latlng.lat, e.latlng.lng)
+    },
+    mousemove: (e) => {
+      onMouseMove?.(e.latlng.lat, e.latlng.lng)
+    },
+    mouseout: () => {
+      onMouseOut?.()
     },
     moveend: () => {
       if (boundsUpdateTimerRef.current) {
@@ -178,13 +188,56 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
   const [elevation, setElevation] = useState<number | null>(null)
   const [isElevationLoading, setIsElevationLoading] = useState(false)
   const lastClickRef = useRef<{ lat: number; lon: number; time: number } | null>(null)
-  const [fetchRadius, setFetchRadius] = useState<number>(1) // Radius in km for cylinder base
+  
+  // Initialize fetchRadius from localStorage, default to 1km
+  const [fetchRadius, setFetchRadius] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('airspace-fetch-radius')
+      if (saved) {
+        const parsed = parseFloat(saved)
+        if (!isNaN(parsed) && parsed >= 1 && parsed <= 25) {
+          return parsed
+        }
+      }
+    }
+    return 1
+  })
+  
+  // Persist fetchRadius to localStorage when it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('airspace-fetch-radius', fetchRadius.toString())
+    }
+  }, [fetchRadius])
+  
   const [elevationCells, setElevationCells] = useState<ElevationCellData[]>([])
+  const [cursorPosition, setCursorPosition] = useState<{ lat: number; lon: number } | null>(null)
   const [elevationRange, setElevationRange] = useState<{ min: number; max: number }>({ min: 0, max: 100 })
 
-  // Layer management
+  // Basemap options - all free tile providers without API keys
+  const basemapOptions = [
+    { id: 'openstreetmap', name: 'OpenStreetMap Standard' },
+    { id: 'osm-humanitarian', name: 'OpenStreetMap Humanitarian' },
+    { id: 'topographic', name: 'OpenTopoMap' },
+    { id: 'cartodb-positron', name: 'CartoDB Positron (Light)' },
+    { id: 'cartodb-dark', name: 'CartoDB Dark Matter' },
+    { id: 'cartodb-voyager', name: 'CartoDB Voyager' },
+    { id: 'esri-imagery', name: 'Esri World Imagery (Satellite)' },
+    { id: 'esri-topo', name: 'Esri World Topographic' },
+    { id: 'esri-street', name: 'Esri World Street Map' },
+    { id: 'esri-gray', name: 'Esri Light Gray Canvas' },
+    { id: 'esri-ocean', name: 'Esri Ocean Basemap' },
+    { id: 'esri-natgeo', name: 'Esri National Geographic' },
+    { id: 'stadia-outdoors', name: 'Stadia Outdoors' },
+    { id: 'stadia-bright', name: 'Stadia OSM Bright' },
+    { id: 'cyclosm', name: 'CyclOSM (Cycling)' },
+  ]
+  
+  // Selected basemap
+  const [selectedBasemap, setSelectedBasemap] = useState<string>('topographic')
+  
+  // Overlay layers (can be toggled independently)
   const [layers, setLayers] = useState<Layer[]>([
-    { id: 'topographic', name: 'Topographic Map', visible: true, opacity: 1.0 },
     { id: 'airspace', name: 'Airspace Restrictions', visible: true, opacity: 1.0 },
   ])
 
@@ -534,17 +587,118 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
           setMapBounds={setMapBounds}
           boundsUpdateTimerRef={boundsUpdateTimerRef}
           mapRef={mapRef}
+          onMouseMove={(lat, lon) => setCursorPosition({ lat, lon })}
+          onMouseOut={() => setCursorPosition(null)}
         />
 
-        {/* OpenTopoMap - Topographic Tile Layer with Contour Lines */}
-        {layers.find(l => l.id === 'topographic')?.visible && (
+        {/* Basemap Layer - selected from dropdown */}
+        {selectedBasemap === 'openstreetmap' && (
           <TileLayer
-            attribution='Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)'
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            maxZoom={19}
+          />
+        )}
+        {selectedBasemap === 'osm-humanitarian' && (
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, Tiles style by <a href="https://www.hotosm.org/">HOT</a>'
+            url="https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png"
+            maxZoom={19}
+          />
+        )}
+        {selectedBasemap === 'topographic' && (
+          <TileLayer
+            attribution='Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a>'
             url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
             subdomains={['a', 'b', 'c']}
             maxZoom={17}
-            minZoom={0}
-            opacity={layers.find(l => l.id === 'topographic')?.opacity || 1.0}
+          />
+        )}
+        {selectedBasemap === 'cartodb-positron' && (
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+            subdomains="abcd"
+            maxZoom={20}
+          />
+        )}
+        {selectedBasemap === 'cartodb-dark' && (
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+            subdomains="abcd"
+            maxZoom={20}
+          />
+        )}
+        {selectedBasemap === 'cartodb-voyager' && (
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+            url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+            subdomains="abcd"
+            maxZoom={20}
+          />
+        )}
+        {selectedBasemap === 'esri-imagery' && (
+          <TileLayer
+            attribution='Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            maxZoom={19}
+          />
+        )}
+        {selectedBasemap === 'esri-topo' && (
+          <TileLayer
+            attribution='Tiles &copy; Esri'
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}"
+            maxZoom={19}
+          />
+        )}
+        {selectedBasemap === 'esri-street' && (
+          <TileLayer
+            attribution='Tiles &copy; Esri'
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"
+            maxZoom={19}
+          />
+        )}
+        {selectedBasemap === 'esri-gray' && (
+          <TileLayer
+            attribution='Tiles &copy; Esri'
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+            maxZoom={16}
+          />
+        )}
+        {selectedBasemap === 'esri-ocean' && (
+          <TileLayer
+            attribution='Tiles &copy; Esri &mdash; Sources: GEBCO, NOAA, CHS, OSU, UNH, CSUMB, National Geographic, DeLorme, NAVTEQ, and Esri'
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}"
+            maxZoom={13}
+          />
+        )}
+        {selectedBasemap === 'esri-natgeo' && (
+          <TileLayer
+            attribution='Tiles &copy; Esri &mdash; National Geographic, Esri, DeLorme, NAVTEQ, UNEP-WCMC, USGS, NASA, ESA, METI, NRCAN, GEBCO, NOAA, iPC'
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile/{z}/{y}/{x}"
+            maxZoom={16}
+          />
+        )}
+        {selectedBasemap === 'stadia-outdoors' && (
+          <TileLayer
+            attribution='&copy; <a href="https://stadiamaps.com/">Stadia Maps</a>, &copy; <a href="https://openmaptiles.org/">OpenMapTiles</a> &copy; <a href="http://openstreetmap.org">OpenStreetMap</a> contributors'
+            url="https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png"
+            maxZoom={20}
+          />
+        )}
+        {selectedBasemap === 'stadia-bright' && (
+          <TileLayer
+            attribution='&copy; <a href="https://stadiamaps.com/">Stadia Maps</a>, &copy; <a href="https://openmaptiles.org/">OpenMapTiles</a> &copy; <a href="http://openstreetmap.org">OpenStreetMap</a> contributors'
+            url="https://tiles.stadiamaps.com/tiles/osm_bright/{z}/{x}/{y}{r}.png"
+            maxZoom={20}
+          />
+        )}
+        {selectedBasemap === 'cyclosm' && (
+          <TileLayer
+            attribution='<a href="https://github.com/cyclosm/cyclosm-cartocss-style/releases">CyclOSM</a> | Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            url="https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png"
+            maxZoom={20}
           />
         )}
 
@@ -663,6 +817,21 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
           })
         }, [allAirspaces, visibleTypes, mapBounds, layers, selectedAirspaceId, handleMapClick])}
 
+        {/* Preview circle following cursor */}
+        {cursorPosition && !clickedPoint && (
+          <Circle
+            center={[cursorPosition.lat, cursorPosition.lon]}
+            radius={fetchRadius * 1000}  // Convert km to meters
+            pathOptions={{
+              color: '#9ca3af',
+              fillColor: '#3b82f6',
+              fillOpacity: 0.1,
+              weight: 1.5,
+              dashArray: '4, 4',
+            }}
+          />
+        )}
+
         {/* Circle showing cylinder base radius */}
         {clickedPoint && (
           <Circle
@@ -677,34 +846,6 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
             }}
           />
         )}
-
-        {/* Elevation grid cells on map - boundaries only, no fill */}
-        {clickedPoint && elevationCells.map((cell, idx) => {
-          // Calculate cell size in degrees
-          const gridSize = 6
-          const kmToDegLat = 1 / 111
-          const kmToDegLon = 1 / (111 * Math.cos(clickedPoint.lat * Math.PI / 180))
-          const cellSizeLat = (fetchRadius * 2 / gridSize) * kmToDegLat
-          const cellSizeLon = (fetchRadius * 2 / gridSize) * kmToDegLon
-          
-          const bounds: LatLngBoundsExpression = [
-            [cell.lat - cellSizeLat / 2, cell.lon - cellSizeLon / 2],
-            [cell.lat + cellSizeLat / 2, cell.lon + cellSizeLon / 2]
-          ]
-          
-          return (
-            <Rectangle
-              key={idx}
-              bounds={bounds}
-              pathOptions={{
-                color: '#6b7280',
-                fill: false,
-                weight: 1,
-                opacity: 0.6,
-              }}
-            />
-          )
-        })}
 
         {/* Single Global Popup for performance - Hide if SidePanel is open */}
         {clickedPoint && !selectedAirspaceId && popupPosition && (
@@ -802,6 +943,9 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         layers={layers}
         onLayerToggle={handleLayerToggle}
         onLayerOpacityChange={handleLayerOpacityChange}
+        basemapOptions={basemapOptions}
+        selectedBasemap={selectedBasemap}
+        onBasemapChange={setSelectedBasemap}
         onFileUpload={handleFileUpload}
         allAirspaceData={useMemo(() => [
           { id: 'base-us', name: 'US Airspace', data: initialData },

@@ -22,6 +22,9 @@ interface SidePanelProps {
   layers: Layer[]
   onLayerToggle: (layerId: string) => void
   onLayerOpacityChange: (layerId: string, opacity: number) => void
+  basemapOptions?: Array<{ id: string; name: string }>
+  selectedBasemap?: string
+  onBasemapChange?: (basemapId: string) => void
   onFileUpload?: (file: File) => Promise<void>
   currentFiles?: Array<{ name: string; source: string; size?: number; date?: string }>
   airspaceTypes?: string[]
@@ -44,6 +47,9 @@ export default function SidePanel({
   layers,
   onLayerToggle,
   onLayerOpacityChange,
+  basemapOptions = [],
+  selectedBasemap = 'topographic',
+  onBasemapChange,
   onFileUpload,
   currentFiles = [],
   airspaceTypes = [],
@@ -345,79 +351,124 @@ export default function SidePanel({
               <div style={{ flex: 1, padding: '24px' }}>
                 {activeTab === 'layers' && (
                   <div>
-                    {layers.map((layer) => (
-                      <div
-                        key={layer.id}
+                    {/* Basemap Selection Dropdown */}
+                    <div style={{ marginBottom: '20px' }}>
+                      <label style={{ 
+                        display: 'block', 
+                        fontSize: '14px', 
+                        fontWeight: '600', 
+                        color: '#374151',
+                        marginBottom: '8px'
+                      }}>
+                        Basemap
+                      </label>
+                      <select
+                        value={selectedBasemap}
+                        onChange={(e) => onBasemapChange?.(e.target.value)}
                         style={{
-                          marginBottom: '16px',
-                          padding: '12px',
-                          border: '1px solid #e5e7eb',
+                          width: '100%',
+                          padding: '10px 12px',
+                          fontSize: '14px',
+                          border: '1px solid #d1d5db',
                           borderRadius: '8px',
+                          backgroundColor: '#ffffff',
+                          color: '#111827',
+                          cursor: 'pointer',
+                          outline: 'none',
                         }}
                       >
+                        {basemapOptions.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Overlay Layers */}
+                    <div style={{ marginBottom: '16px' }}>
+                      <label style={{ 
+                        display: 'block', 
+                        fontSize: '14px', 
+                        fontWeight: '600', 
+                        color: '#374151',
+                        marginBottom: '12px'
+                      }}>
+                        Overlays
+                      </label>
+                      {layers.map((layer) => (
                         <div
+                          key={layer.id}
                           style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            marginBottom: '8px',
+                            marginBottom: '12px',
+                            padding: '12px',
+                            border: '1px solid #e5e7eb',
+                            borderRadius: '8px',
                           }}
                         >
-                          <label
+                          <div
                             style={{
                               display: 'flex',
+                              justifyContent: 'space-between',
                               alignItems: 'center',
-                              cursor: 'pointer',
-                              fontSize: '14px',
-                              fontWeight: '500',
-                              color: '#111827',
                             }}
                           >
-                            <input
-                              type="checkbox"
-                              checked={layer.visible}
-                              onChange={() => onLayerToggle(layer.id)}
-                              style={{
-                                marginRight: '8px',
-                                width: '16px',
-                                height: '16px',
-                                cursor: 'pointer',
-                              }}
-                            />
-                            {layer.name}
-                          </label>
-                        </div>
-                        {layer.visible && (
-                          <div>
-                            <div
+                            <label
                               style={{
                                 display: 'flex',
-                                justifyContent: 'space-between',
                                 alignItems: 'center',
-                                marginTop: '8px',
+                                cursor: 'pointer',
+                                fontSize: '14px',
+                                fontWeight: '500',
+                                color: '#111827',
                               }}
                             >
-                              <span style={{ fontSize: '12px', color: '#6b7280' }}>Opacity</span>
-                              <span style={{ fontSize: '12px', color: '#6b7280' }}>
-                                {Math.round(layer.opacity * 100)}%
-                              </span>
-                            </div>
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                              value={layer.opacity}
-                              onChange={(e) => onLayerOpacityChange(layer.id, parseFloat(e.target.value))}
-                              style={{
-                                width: '100%',
-                                marginTop: '4px',
-                              }}
-                            />
+                              <input
+                                type="checkbox"
+                                checked={layer.visible}
+                                onChange={() => onLayerToggle(layer.id)}
+                                style={{
+                                  marginRight: '8px',
+                                  width: '16px',
+                                  height: '16px',
+                                  cursor: 'pointer',
+                                }}
+                              />
+                              {layer.name}
+                            </label>
                           </div>
-                        )}
-                      </div>
-                    ))}
+                          {layer.visible && (
+                            <div>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  marginTop: '8px',
+                                }}
+                              >
+                                <span style={{ fontSize: '12px', color: '#6b7280' }}>Opacity</span>
+                                <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                                  {Math.round(layer.opacity * 100)}%
+                                </span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                value={layer.opacity}
+                                onChange={(e) => onLayerOpacityChange(layer.id, parseFloat(e.target.value))}
+                                style={{
+                                  width: '100%',
+                                  marginTop: '4px',
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
 
                     {/* Airspace Types */}
                     {airspaceTypes.length > 0 && onTypeToggle && (
@@ -695,20 +746,6 @@ export default function SidePanel({
 
                 {activeTab === 'settings' && (
                   <div>
-                    <div style={{ padding: '20px', textAlign: 'center', color: '#6b7280', fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif" }}>
-                      <div style={{ marginBottom: '16px' }}>
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#9ca3af' }}>
-                          <circle cx="12" cy="12" r="3"></circle>
-                          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-                        </svg>
-                      </div>
-                      <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: '600', color: '#374151' }}>
-                        Settings
-                      </h3>
-                      <p style={{ margin: 0, fontSize: '14px', marginBottom: '24px' }}>
-                        Application settings and preferences will appear here.
-                      </p>
-
                       <div style={{ textAlign: 'left', padding: '16px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                           <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>
@@ -721,7 +758,7 @@ export default function SidePanel({
                         <input
                           type="range"
                           min="1"
-                          max="10"
+                          max="25"
                           step="0.5"
                           value={fetchRadius}
                           onChange={(e) => setFetchRadius(parseFloat(e.target.value))}
@@ -732,18 +769,14 @@ export default function SidePanel({
                           }}
                         />
                         <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '6px' }}>
-                          Search radius for finding nearby airspaces (1km - 10km).
+                          Search radius for finding nearby airspaces (1-25 km).
                         </p>
                       </div>
-                    </div>
                   </div>
                 )}
 
                 {activeTab === 'aircolumn' && (
                   <div>
-                    <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: '600', color: '#111827' }}>
-                      Air Column
-                    </h3>
                     {clickedPoint ? (
                       <>
                         <div style={{ marginBottom: '16px', fontSize: '14px', color: '#6b7280' }}>
