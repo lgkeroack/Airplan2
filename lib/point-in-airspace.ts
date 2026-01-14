@@ -142,3 +142,47 @@ export function findAirspacesAtPoint(
   return airspaces.filter(airspace => pointInAirspace(point, airspace))
 }
 
+// Find all airspaces within a radius of a point
+export function findAirspacesNearby(
+  point: { latitude: number; longitude: number },
+  radiusKM: number,
+  airspaces: AirspaceData[]
+): AirspaceData[] {
+  if (radiusKM <= 0) return findAirspacesAtPoint(point, airspaces)
+
+  return airspaces.filter(airspace => {
+    // 1. Exact match (contains point)
+    if (pointInAirspace(point, airspace)) return true
+
+    // 2. Proximity check
+    // If we have center coordinates and radius, check circle overlap
+    if (airspace.coordinates && airspace.radius !== undefined) {
+      const dist = distanceNM(
+        point.latitude, point.longitude,
+        airspace.coordinates.latitude, airspace.coordinates.longitude
+      )
+      // Convert radiusKM to NM (1 NM = 1.852 km)
+      const searchRadiusNM = radiusKM / 1.852
+      return dist <= (airspace.radius + searchRadiusNM)
+    }
+
+    // fallback for polygons: check if any point is close enough
+    // (This is a simplified check - finding min distance to polygon is complex)
+    // We check if bounding box is close enough as a quick filter
+    if (airspace.bounds) {
+      const b = airspace.bounds
+      const latDegreeDist = 111 // approx km per degree
+      const latDelta = radiusKM / latDegreeDist
+
+      // Rough bounding box expand
+      if (point.latitude > b.north + latDelta || point.latitude < b.south - latDelta ||
+        point.longitude > b.east + latDelta || point.longitude < b.west - latDelta) {
+        return false
+      }
+      return true // If close to bounds, include it (optimistic)
+    }
+
+    return false
+  })
+}
+

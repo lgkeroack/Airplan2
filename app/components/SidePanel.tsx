@@ -2,7 +2,10 @@
 
 import { useState, useRef, useMemo, useEffect } from 'react'
 import type { AirspaceData } from '@/lib/types'
-import { findAirspacesAtPoint } from '@/lib/point-in-airspace'
+import { findAirspacesAtPoint, findAirspacesNearby } from '@/lib/point-in-airspace'
+import dynamic from 'next/dynamic'
+
+const AirspaceCylinder = dynamic(() => import('./AirspaceCylinder'), { ssr: false })
 
 interface Layer {
   id: string
@@ -48,7 +51,13 @@ export default function SidePanel({
   onAirspaceSelect,
   onSearchLocation,
 }: SidePanelProps) {
-  const [activeTab, setActiveTab] = useState<'layers' | 'files' | 'aircolumn'>('layers')
+  const [activeTab, setActiveTab] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings'>('layers')
+  const [activeTabState, setActiveTabState] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings'>('layers')
+  // Ensure strict state for activeTab to avoid layout shifts
+  useEffect(() => { setActiveTabState(activeTab) }, [activeTab])
+
+  const [searchHistory, setSearchHistory] = useState<string[]>([])
+  const [fetchRadius, setFetchRadius] = useState<number>(1) // Default 1km
   const [searchQuery, setSearchQuery] = useState('')
   const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [isUploading, setIsUploading] = useState(false)
@@ -98,14 +107,14 @@ export default function SidePanel({
       allAirspaces.push(...source.data)
     })
 
-    return findAirspacesAtPoint({ latitude: clickedPoint.lat, longitude: clickedPoint.lon }, allAirspaces)
+    return findAirspacesNearby({ latitude: clickedPoint.lat, longitude: clickedPoint.lon }, fetchRadius, allAirspaces)
       .sort((a, b) => {
         // Sort by altitude floor (lowest first)
         const aFloor = a.altitude?.floor || 0
         const bFloor = b.altitude?.floor || 0
         return aFloor - bFloor
       })
-  }, [clickedPoint, allAirspaceData])
+  }, [clickedPoint, allAirspaceData, fetchRadius])
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -280,7 +289,7 @@ export default function SidePanel({
               {/* Content Header */}
               <div style={{ padding: '24px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.02em', color: '#111827' }}>
-                  {activeTab === 'layers' ? 'Map Layers' : activeTab === 'files' ? 'Airspace Files' : 'Air Column'}
+                  {activeTab === 'layers' ? 'Map Layers' : activeTab === 'files' ? 'Airspace Files' : activeTab === 'search' ? 'Search' : activeTab === 'settings' ? 'Settings' : 'Air Column'}
                 </h2>
                 <button
                   onClick={onToggle}
@@ -305,58 +314,6 @@ export default function SidePanel({
                     <line x1="6" y1="6" x2="18" y2="18"></line>
                   </svg>
                 </button>
-              </div>
-
-              {/* Search Bar - Global for all tabs */}
-              <div style={{ padding: '0 24px 16px 24px', borderBottom: '1px solid #e5e7eb', marginTop: '16px' }}>
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault()
-                    if (searchQuery.trim() && onSearchLocation) {
-                      onSearchLocation(searchQuery.trim())
-                    }
-                  }}
-                  style={{ display: 'flex', gap: '8px' }}
-                >
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search location (lat, lon or name)..."
-                    style={{
-                      flex: 1,
-                      padding: '10px 14px',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                      fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif",
-                      outline: 'none',
-                      boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)',
-                      transition: 'border-color 0.2s'
-                    }}
-                    onFocus={(e) => e.currentTarget.style.borderColor = '#3b82f6'}
-                    onBlur={(e) => e.currentTarget.style.borderColor = '#d1d5db'}
-                  />
-                  <button
-                    type="submit"
-                    style={{
-                      padding: '10px 16px',
-                      backgroundColor: '#3b82f6',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif",
-                      transition: 'background-color 0.2s'
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#2563eb'}
-                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#3b82f6'}
-                  >
-                    GO
-                  </button>
-                </form>
               </div>
 
               {/* Dynamic Content */}
@@ -584,6 +541,174 @@ export default function SidePanel({
 
                       <div style={{ fontSize: '12px', color: '#6b7280' }}>
                         Upload an OpenAir format (.txt) file to add as a layer. The file will be validated before being added.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === 'search' && (
+                  <div>
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault()
+                        if (searchQuery.trim() && onSearchLocation) {
+                          onSearchLocation(searchQuery.trim())
+                          setSearchHistory(prev => {
+                            const newHistory = [searchQuery.trim(), ...prev.filter(h => h !== searchQuery.trim())]
+                            return newHistory.slice(0, 10) // Keep last 10
+                          })
+                        }
+                      }}
+                      style={{ marginBottom: '24px' }}
+                    >
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <input
+                          type="text"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          placeholder="search"
+                          style={{
+                            flex: 1,
+                            padding: '10px 14px',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '8px',
+                            fontSize: '14px',
+                            fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif",
+                            outline: 'none',
+                            boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)',
+                            transition: 'border-color 0.2s',
+                            color: '#111827'
+                          }}
+                          onFocus={(e) => e.currentTarget.style.borderColor = '#3b82f6'}
+                          onBlur={(e) => e.currentTarget.style.borderColor = '#d1d5db'}
+                        />
+                        <button
+                          type="submit"
+                          style={{
+                            padding: '10px 16px',
+                            backgroundColor: '#3b82f6',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            fontSize: '14px',
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif",
+                            transition: 'background-color 0.2s'
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#2563eb'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#3b82f6'}
+                        >
+                          GO
+                        </button>
+                      </div>
+                    </form>
+
+                    {/* Search History */}
+                    {searchHistory.length > 0 && (
+                      <div>
+                        <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          Recent Searches
+                        </h3>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          {searchHistory.map((term, index) => (
+                            <button
+                              key={index}
+                              onClick={() => {
+                                setSearchQuery(term)
+                                if (onSearchLocation) {
+                                  onSearchLocation(term)
+                                  setSearchHistory(prev => {
+                                    const newHistory = [term, ...prev.filter(h => h !== term)]
+                                    return newHistory.slice(0, 10)
+                                  })
+                                }
+                              }}
+                              style={{
+                                textAlign: 'left',
+                                padding: '12px',
+                                background: 'none',
+                                border: 'none',
+                                borderBottom: '1px solid #f3f4f6',
+                                cursor: 'pointer',
+                                fontSize: '14px',
+                                color: '#374151',
+                                display: 'flex',
+                                alignItems: 'center',
+                                transition: 'background-color 0.1s',
+                                fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif"
+                              }}
+                              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '10px' }}>
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <polyline points="12 6 12 12 16 14"></polyline>
+                              </svg>
+                              {term}
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          onClick={() => setSearchHistory([])}
+                          style={{
+                            marginTop: '12px',
+                            background: 'none',
+                            border: 'none',
+                            color: '#9ca3af',
+                            fontSize: '12px',
+                            cursor: 'pointer',
+                            textDecoration: 'underline'
+                          }}
+                        >
+                          Clear History
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeTab === 'settings' && (
+                  <div>
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#6b7280', fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif" }}>
+                      <div style={{ marginBottom: '16px' }}>
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#9ca3af' }}>
+                          <circle cx="12" cy="12" r="3"></circle>
+                          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                        </svg>
+                      </div>
+                      <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: '600', color: '#374151' }}>
+                        Settings
+                      </h3>
+                      <p style={{ margin: 0, fontSize: '14px', marginBottom: '24px' }}>
+                        Application settings and preferences will appear here.
+                      </p>
+
+                      <div style={{ textAlign: 'left', padding: '16px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                          <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                            Fetch Radius
+                          </label>
+                          <span style={{ fontSize: '12px', fontWeight: '500', color: '#6b7280', backgroundColor: '#e5e7eb', padding: '2px 6px', borderRadius: '4px' }}>
+                            {fetchRadius} km
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="1"
+                          max="10"
+                          step="0.5"
+                          value={fetchRadius}
+                          onChange={(e) => setFetchRadius(parseFloat(e.target.value))}
+                          style={{
+                            width: '100%',
+                            accentColor: '#3b82f6',
+                            cursor: 'pointer'
+                          }}
+                        />
+                        <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '6px' }}>
+                          Search radius for finding nearby airspaces (1km - 10km).
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -916,6 +1041,9 @@ export default function SidePanel({
                             No airspaces found at this location
                           </div>
                         )}
+
+                        {/* 3D Visualization */}
+                        <AirspaceCylinder />
                       </>
                     ) : (
                       <div style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>
@@ -974,15 +1102,21 @@ export default function SidePanel({
 
           {/* Navigation Items */}
           {[
+            { id: 'search', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z', label: 'Search' },
             { id: 'layers', icon: 'M12 2L2 7l10 5l10-5l-10-5z M2 17l10 5l10-5 M2 12l10 5l10-5', label: 'Layers' },
             { id: 'files', icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8', label: 'Files' },
-            { id: 'aircolumn', icon: 'M18 20V10 M12 20V4 M6 20v-6', label: 'Air Column' }
+            { id: 'aircolumn', icon: 'M18 20V10 M12 20V4 M6 20v-6', label: 'Air Column' },
+            { id: 'settings', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 0v.01M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z', label: 'Settings' }
           ].map((item) => (
             <button
               key={item.id}
               onClick={() => {
-                setActiveTab(item.id as any)
-                if (!isOpen) onToggle()
+                if (activeTab === item.id && isOpen) {
+                  onToggle() // Close if clicking active tab
+                } else {
+                  setActiveTab(item.id as any)
+                  if (!isOpen) onToggle() // Open if closed
+                }
               }}
               style={{
                 width: '44px',
