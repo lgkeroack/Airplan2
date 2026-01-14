@@ -1,37 +1,9 @@
 import { serverLogger } from './server-logger'
 import { createHash } from 'crypto'
 
-export interface AirspaceData {
-    id: string
-    notamNumber: string
-    type: string
-    location: string
-    effectiveStart: string
-    effectiveEnd: string
-    message: string
-    coordinates?: {
-        latitude: number
-        longitude: number
-    }
-    radius?: number // in nautical miles
-    altitude?: {
-        floor: number
-        ceiling: number
-    }
-    polygon?: Array<{ latitude: number; longitude: number }>
-    bounds?: {
-        north: number
-        south: number
-        east: number
-        west: number
-    }
-    metadata?: {
-        fileName: string
-        fileSize: number
-        lastModified: string
-        source: string
-    }
-}
+import { AirspaceData } from './types'
+export type { AirspaceData }
+
 
 // Check if a polygon is valid
 export function isValidPolygon(polygon: Array<{ latitude: number; longitude: number }> | undefined): boolean {

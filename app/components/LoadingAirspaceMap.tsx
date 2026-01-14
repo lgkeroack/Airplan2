@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic'
 import AirspaceMap from './AirspaceMap'
 import ParsingProgress from './ParsingProgress'
 import { loadAirspaceDataWithProgress } from '@/lib/parse-with-progress'
-import type { AirspaceData } from '@/lib/airspace-processing'
+import type { AirspaceData } from '@/lib/types'
 import type { ParseProgress } from '@/lib/parse-with-progress'
 import type { AirspaceFile } from '@/lib/load-airspace-files'
 

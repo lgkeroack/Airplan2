@@ -1,7 +1,7 @@
 // Wrapper for parsing with progress tracking
 
 import { parseOpenAirFile, convertToApiFormat } from './openair-parser'
-import type { AirspaceData } from './airspace-processing'
+import type { AirspaceData } from './types'
 
 export interface ParseProgress {
   progress: number // 0-100

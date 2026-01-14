@@ -5,7 +5,7 @@ import L, { LatLngExpression, Map as LeafletMap } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import SidePanel from './SidePanel'
-import type { AirspaceData } from '@/lib/airspace-processing'
+import type { AirspaceData } from '@/lib/types'
 import { validateOpenAirFile } from '@/lib/validate-openair'
 import { findAirspacesAtPoint } from '@/lib/point-in-airspace'
 
@@ -256,7 +256,13 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     }
 
     return (
-      <div style={{ minWidth: '250px', maxHeight: '400px', overflowY: 'auto', fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif" }}>
+      <div style={{
+        minWidth: '250px',
+        maxWidth: '80vw',
+        maxHeight: '40vh',
+        overflowY: 'auto',
+        fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif"
+      }}>
         {/* Location Details Header */}
         <div style={{ borderBottom: '1px solid #e5e7eb', paddingBottom: '12px', marginBottom: '12px' }}>
           <div style={{ fontSize: '13px', color: '#111827', fontWeight: 'bold' }}>
@@ -676,7 +682,10 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
                 gap: '12px',
                 padding: '4px',
                 minWidth: '200px',
-                fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif"
+                maxWidth: '80vw',
+                maxHeight: '40vh',
+                fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif",
+                overflowY: 'auto'
               }}>
                 {/* Coordinates and Elevation Info */}
                 <div style={{ borderBottom: '1px solid #e5e7eb', paddingBottom: '8px' }}>

@@ -1,6 +1,6 @@
 // Check if a point is within an airspace (polygon or circle)
 
-import type { AirspaceData } from './airspace-processing'
+import type { AirspaceData } from './types'
 
 // Check if a polygon is valid (has valid coordinates and reasonable area)
 export function isValidPolygon(polygon: Array<{ latitude: number; longitude: number }>): boolean {

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useMemo, useEffect } from 'react'
-import type { AirspaceData } from '@/lib/airspace-processing'
+import type { AirspaceData } from '@/lib/types'
 import { findAirspacesAtPoint } from '@/lib/point-in-airspace'
 
 interface Layer {
@@ -55,6 +55,20 @@ export default function SidePanel({
   const [uploadProgress, setUploadProgress] = useState({ progress: 0, status: 'Starting...' })
   const [elevation, setElevation] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [isMobile, setIsMobile] = useState(false)
+
+  // Handle responsive layout
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+
+    // Initial check
+    checkMobile()
+
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
 
   // Switch to air column tab when point is clicked and fetch elevation
   useEffect(() => {
@@ -244,20 +258,25 @@ export default function SidePanel({
         {/* Content Panel (Expands to the left) */}
         <div
           style={{
-            width: isOpen ? '400px' : '0',
+            width: isOpen ? (isMobile ? '100%' : '400px') : '0',
             backgroundColor: 'white',
-            height: '100%',
+            height: isMobile ? (isOpen ? '50vh' : '0') : '100%',
+            position: isMobile ? 'fixed' : 'relative',
+            bottom: isMobile ? 0 : 'auto',
+            left: isMobile ? 0 : 'auto',
+            right: 0,
             overflowX: 'hidden',
             overflowY: 'auto',
-            transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-            boxShadow: isOpen ? '-4px 0 15px rgba(0,0,0,0.1)' : 'none',
+            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+            boxShadow: isOpen ? (isMobile ? '0 -4px 15px rgba(0,0,0,0.1)' : '-4px 0 15px rgba(0,0,0,0.1)') : 'none',
             display: 'flex',
             flexDirection: 'column',
-            borderLeft: isOpen ? '1px solid #e5e7eb' : 'none'
+            borderLeft: !isMobile && isOpen ? '1px solid #e5e7eb' : 'none',
+            borderTop: isMobile && isOpen ? '1px solid #e5e7eb' : 'none'
           }}
         >
           {isOpen && (
-            <div style={{ width: '400px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ width: isMobile ? '100%' : '400px', flex: 1, display: 'flex', flexDirection: 'column' }}>
               {/* Content Header */}
               <div style={{ padding: '24px', borderBottom: '1px solid #e5e7eb' }}>
                 <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.02em', color: '#111827' }}>
