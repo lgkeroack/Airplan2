@@ -1,12 +1,12 @@
 'use client'
 
-import { useRef, useLayoutEffect, useState } from 'react'
+import { useRef, useLayoutEffect, useState, useEffect } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
-import * as THREE from 'three'
+import { Mesh, BufferAttribute, MathUtils, DoubleSide } from 'three'
 
 function CylinderMesh({ tilt }: { tilt: number }) {
-    const meshRef = useRef<THREE.Mesh>(null)
+    const meshRef = useRef<Mesh>(null)
 
     useLayoutEffect(() => {
         if (!meshRef.current) return
@@ -35,23 +35,41 @@ function CylinderMesh({ tilt }: { tilt: number }) {
             colors[i * 3 + 2] = t     // B
         }
 
-        geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+        geo.setAttribute('color', new BufferAttribute(colors, 3))
         geo.attributes.color.needsUpdate = true
     }, []) // Run once on mount
 
     return (
         <mesh
             ref={meshRef}
-            rotation={[THREE.MathUtils.degToRad(tilt), 0, 0]} // Tilt around X axis
+            rotation={[MathUtils.degToRad(tilt), 0, 0]} // Tilt around X axis
         >
             <cylinderGeometry args={[1.5, 1.5, 4, 32, 1, false]} />
-            <meshBasicMaterial vertexColors side={THREE.DoubleSide} transparent opacity={0.7} />
+            <meshBasicMaterial vertexColors side={DoubleSide} transparent opacity={0.7} />
         </mesh>
     )
 }
 
 export default function AirspaceCylinder() {
     const [tilt, setTilt] = useState(0)
+    const [mounted, setMounted] = useState(false)
+
+    useEffect(() => {
+        setMounted(true)
+    }, [])
+
+    if (!mounted) {
+        return (
+            <div style={{ marginTop: '20px', borderTop: '1px solid #e5e7eb', paddingTop: '16px' }}>
+                <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', fontWeight: '600', color: '#111827' }}>
+                    3D Airspace View
+                </h3>
+                <div style={{ position: 'relative', height: '300px', width: '100%', backgroundColor: '#111827', borderRadius: '8px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <span style={{ color: '#9ca3af' }}>Loading 3D view...</span>
+                </div>
+            </div>
+        )
+    }
 
     return (
         <div style={{ marginTop: '20px', borderTop: '1px solid #e5e7eb', paddingTop: '16px' }}>
