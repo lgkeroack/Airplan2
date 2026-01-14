@@ -73,4 +73,17 @@ a {
   height: 100%;
   width: 100%;
   z-index: 1;
+  font-family: 'Futura', 'Trebuchet MS', Arial, sans-serif;
+}
+
+/* Ensure Futura is used in Leaflet popups */
+.leaflet-popup-content-wrapper,
+.leaflet-popup-content,
+.leaflet-popup-tip-container {
+  font-family: 'Futura', 'Trebuchet MS', Arial, sans-serif;
+}
+
+/* Global font override */
+* {
+  font-family: 'Futura', 'Trebuchet MS', Arial, sans-serif;
 }

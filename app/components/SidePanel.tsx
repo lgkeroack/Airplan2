@@ -2,11 +2,13 @@
 
 import { useState, useRef, useMemo, useEffect } from 'react'
 import type { AirspaceData } from '@/lib/types'
-import { findAirspacesAtPoint, findAirspacesNearby } from '@/lib/point-in-airspace'
+import { findAirspacesAtPoint, findAirspacesNearby, findAirspacesInPolygon } from '@/lib/point-in-airspace'
 import dynamic from 'next/dynamic'
 import type { ElevationCellData } from './AirspaceCylinder'
+import type { PolygonVertex } from './AirspacePolygon'
 
 const AirspaceCylinder = dynamic(() => import('./AirspaceCylinder'), { ssr: false })
+const AirspacePolygon = dynamic(() => import('./AirspacePolygon'), { ssr: false })
 
 interface Layer {
   id: string
@@ -38,6 +40,7 @@ interface SidePanelProps {
   fetchRadius?: number
   onFetchRadiusChange?: (radius: number) => void
   onElevationCellsChange?: (cells: ElevationCellData[], minElev: number, maxElev: number) => void
+  activePolygon?: PolygonVertex[] | null
 }
 
 export default function SidePanel({
@@ -63,6 +66,7 @@ export default function SidePanel({
   fetchRadius: fetchRadiusProp = 1,
   onFetchRadiusChange,
   onElevationCellsChange,
+  activePolygon,
 }: SidePanelProps) {
   const [activeTab, setActiveTab] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings'>('layers')
   const [activeTabState, setActiveTabState] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings'>('layers')
@@ -146,6 +150,34 @@ export default function SidePanel({
     
     return found
   }, [clickedPoint, allAirspaceData, fetchRadius])
+
+  // Find airspaces that intersect with the polygon
+  const airspacesInPolygon = useMemo(() => {
+    if (!activePolygon || activePolygon.length < 3) return []
+
+    const allAirspaces: AirspaceData[] = []
+    allAirspaceData.forEach(source => {
+      allAirspaces.push(...source.data)
+    })
+
+    console.log('[SidePanel] Searching for airspaces in polygon with', activePolygon.length, 'vertices')
+    console.log('[SidePanel] Total airspaces to search:', allAirspaces.length)
+    
+    const found = findAirspacesInPolygon(activePolygon, allAirspaces)
+      .sort((a, b) => {
+        // Sort by altitude floor (lowest first)
+        const aFloor = a.altitude?.floor || 0
+        const bFloor = b.altitude?.floor || 0
+        return aFloor - bFloor
+      })
+    
+    console.log('[SidePanel] Found', found.length, 'airspaces in polygon')
+    found.forEach((a, i) => {
+      console.log(`  [${i}] ${a.type} (${a.id}): floor=${a.altitude?.floor}, ceiling=${a.altitude?.ceiling}`)
+    })
+    
+    return found
+  }, [activePolygon, allAirspaceData])
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -1107,6 +1139,31 @@ export default function SidePanel({
                           onElevationCellsChange={onElevationCellsChange}
                           hasAirspace={airspacesAtPoint.length > 0}
                           airspacesAtPoint={airspacesAtPoint}
+                          isExpanded={is3DExpanded}
+                          onToggleExpand={() => setIs3DExpanded(!is3DExpanded)}
+                        />
+                      </>
+                    ) : activePolygon && activePolygon.length >= 3 ? (
+                      <>
+                        <div style={{ 
+                          padding: '16px', 
+                          backgroundColor: '#fef2f2', 
+                          borderRadius: '8px', 
+                          marginBottom: '16px',
+                          border: '1px solid #fecaca'
+                        }}>
+                          <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#991b1b', marginBottom: '4px' }}>
+                            Custom Polygon
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#b91c1c' }}>
+                            {activePolygon.length} vertices
+                          </div>
+                        </div>
+                        
+                        {/* 3D Polygon Visualization */}
+                        <AirspacePolygon 
+                          vertices={activePolygon}
+                          airspacesInPolygon={airspacesInPolygon}
                           isExpanded={is3DExpanded}
                           onToggleExpand={() => setIs3DExpanded(!is3DExpanded)}
                         />

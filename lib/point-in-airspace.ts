@@ -198,3 +198,56 @@ export function findAirspacesNearby(
   })
 }
 
+// Check if a polygon intersects with an airspace
+export function polygonIntersectsAirspace(
+  polygon: Array<{ lat: number; lon: number }>,
+  airspace: AirspaceData
+): boolean {
+  // Convert polygon format from {lat, lon} to {latitude, longitude}
+  const polygonCoords = polygon.map(p => ({ latitude: p.lat, longitude: p.lon }))
+  
+  // Check if any vertex of the user's polygon is inside the airspace
+  for (const vertex of polygonCoords) {
+    if (pointInAirspace(vertex, airspace)) {
+      return true
+    }
+  }
+  
+  // Check if any vertex of the airspace polygon is inside the user's polygon
+  if (airspace.polygon && airspace.polygon.length > 2) {
+    for (const vertex of airspace.polygon) {
+      if (pointInPolygon(vertex, polygonCoords)) {
+        return true
+      }
+    }
+  }
+  
+  // For circular airspaces, check if center is inside polygon or if circle overlaps
+  if (airspace.coordinates && airspace.radius !== undefined) {
+    const center = { lat: airspace.coordinates.latitude, lon: airspace.coordinates.longitude }
+    if (pointInPolygon(center.lat, center.lon, polygon)) {
+      return true
+    }
+    
+    // Check if any polygon vertex is within the circle
+    for (const vertex of polygon) {
+      if (pointInCircle(
+        { latitude: vertex.lat, longitude: vertex.lon },
+        airspace.coordinates,
+        airspace.radius
+      )) {
+        return true
+      }
+    }
+  }
+  
+  return false
+}
+
+// Find all airspaces that intersect with a polygon
+export function findAirspacesInPolygon(
+  polygon: Array<{ lat: number; lon: number }>,
+  airspaces: AirspaceData[]
+): AirspaceData[] {
+  return airspaces.filter(airspace => polygonIntersectsAirspace(polygon, airspace))
+}
