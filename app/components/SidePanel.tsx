@@ -278,10 +278,33 @@ export default function SidePanel({
           {isOpen && (
             <div style={{ width: isMobile ? '100%' : '400px', flex: 1, display: 'flex', flexDirection: 'column' }}>
               {/* Content Header */}
-              <div style={{ padding: '24px', borderBottom: '1px solid #e5e7eb' }}>
+              <div style={{ padding: '24px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.02em', color: '#111827' }}>
                   {activeTab === 'layers' ? 'Map Layers' : activeTab === 'files' ? 'Airspace Files' : 'Air Column'}
                 </h2>
+                <button
+                  onClick={onToggle}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '8px',
+                    borderRadius: '50%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#6b7280',
+                    transition: 'background-color 0.2s',
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                  aria-label="Close panel"
+                >
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                </button>
               </div>
 
               {/* Search Bar - Global for all tabs */}
@@ -684,9 +707,9 @@ export default function SidePanel({
                             return (
                               <div style={{ position: 'relative', height: '500px', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', backgroundColor: '#f9fafb', fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif" }}>
                                 {/* Altitude scale */}
-                                <div style={{ position: 'absolute', left: '0', top: '16px', bottom: '16px', width: '110px', color: '#6b7280' }}>
-                                  {/* Central Vertical Line */}
-                                  <div style={{
+                                <div style={{ position: 'absolute', left: '0', top: '16px', bottom: '16px', width: isMobile ? '70px' : '110px', color: '#6b7280' }}>
+                                  {/* Central Vertical Line - Only on desktop */}
+                                  {!isMobile && <div style={{
                                     position: 'absolute',
                                     top: '24px',
                                     bottom: '0',
@@ -694,7 +717,7 @@ export default function SidePanel({
                                     width: '2px',
                                     backgroundColor: '#d1d5db',
                                     zIndex: 1
-                                  }} />
+                                  }} />}
 
                                   {/* Scale Headers */}
                                   <div style={{
@@ -709,9 +732,13 @@ export default function SidePanel({
                                     textTransform: 'uppercase',
                                     letterSpacing: '0.05em'
                                   }}>
-                                    <div style={{ width: '50px', textAlign: 'right', paddingRight: '5px' }}>Feet</div>
-                                    <div style={{ width: '10px' }} />
-                                    <div style={{ width: '50px', textAlign: 'left', paddingLeft: '5px' }}>Meters</div>
+                                    <div style={{ width: isMobile ? '100%' : '50px', textAlign: isMobile ? 'center' : 'right', paddingRight: isMobile ? '0' : '5px' }}>Feet</div>
+                                    {!isMobile && (
+                                      <>
+                                        <div style={{ width: '10px' }} />
+                                        <div style={{ width: '50px', textAlign: 'left', paddingLeft: '5px' }}>Meters</div>
+                                      </>
+                                    )}
                                   </div>
 
                                   {scaleLabels.map(alt => {
@@ -729,20 +756,24 @@ export default function SidePanel({
                                         justifyContent: 'center',
                                         alignItems: 'baseline'
                                       }}>
-                                        <div style={{ width: '50px', textAlign: 'right', paddingRight: '8px', fontSize: '10px', fontWeight: '600' }}>
+                                        <div style={{ width: isMobile ? '100%' : '50px', textAlign: isMobile ? 'center' : 'right', paddingRight: isMobile ? '0' : '8px', fontSize: '10px', fontWeight: '600' }}>
                                           {alt >= 1000 ? `${(alt / 1000).toFixed(alt % 1000 === 0 ? 0 : 1)}k` : alt}
                                         </div>
-                                        <div style={{ width: '10px' }} />
-                                        <div style={{ width: '50px', textAlign: 'left', paddingLeft: '8px', fontSize: '9px', opacity: 0.8 }}>
-                                          {ftToM(alt)}
-                                        </div>
+                                        {!isMobile && (
+                                          <>
+                                            <div style={{ width: '10px' }} />
+                                            <div style={{ width: '50px', textAlign: 'left', paddingLeft: '8px', fontSize: '9px', opacity: 0.8 }}>
+                                              {ftToM(alt)}
+                                            </div>
+                                          </>
+                                        )}
                                       </div>
                                     )
                                   })}
                                 </div>
 
                                 {/* Airspace bars */}
-                                <div style={{ marginLeft: '120px', position: 'relative', height: '100%' }}>
+                                <div style={{ marginLeft: isMobile ? '70px' : '120px', position: 'relative', height: '100%' }}>
                                   {/* Ground visualization */}
                                   {elevation !== null && (
                                     <div style={{
