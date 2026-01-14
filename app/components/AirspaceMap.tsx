@@ -239,6 +239,8 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
   // Overlay layers (can be toggled independently)
   const [layers, setLayers] = useState<Layer[]>([
     { id: 'airspace', name: 'Airspace Restrictions', visible: true, opacity: 1.0 },
+    { id: 'thermal-skyways', name: 'Thermal Skyways', visible: false, opacity: 0.7 },
+    { id: 'thermal-hotspots', name: 'Thermal Hotspots', visible: false, opacity: 0.7 },
   ])
 
   // Handle location search
@@ -570,6 +572,166 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     return [Number(clickedPoint.lat.toFixed(6)), Number(clickedPoint.lon.toFixed(6))] as LatLngExpression
   }, [clickedPoint])
 
+  // Memoize airspace layer rendering to prevent re-computation on every render
+  const airspaceLayer = useMemo(() => {
+    // Filter airspaces by type and viewport bounds for performance
+    const filtered = allAirspaces
+      .filter(item => {
+        if (!visibleTypes.has(item.type)) return false
+
+        // Skip if no bounds yet
+        if (!mapBounds) return true
+
+        // Optimized viewport filtering using pre-calculated bounds
+        const padding = 2.0
+        const b = item.bounds
+        if (b) {
+          return b.north >= mapBounds.south - padding &&
+            b.south <= mapBounds.north + padding &&
+            b.east >= mapBounds.west - padding &&
+            b.west <= mapBounds.east + padding
+        }
+
+        // Fallback filtering if bounds missing
+        if (item.polygon && item.polygon.length > 0) {
+          return item.polygon.some(coord =>
+            coord.latitude >= mapBounds.south - padding &&
+            coord.latitude <= mapBounds.north + padding &&
+            coord.longitude >= mapBounds.west - padding &&
+            coord.longitude <= mapBounds.east + padding
+          )
+        }
+
+        return true
+      })
+
+    return filtered.map((item) => {
+      if (!item.coordinates && !item.polygon) return null
+
+      const color = getAirspaceColor(item.type)
+      const baseOpacity = getFillOpacity(item.type)
+      const layerOpacity = layers.find(l => l.id === 'airspace')?.opacity || 1.0
+      const fillOpacity = baseOpacity * layerOpacity
+      const isSelected = Array.isArray(selectedAirspaceId)
+        ? selectedAirspaceId.includes(item.id)
+        : selectedAirspaceId === item.id
+
+      // Render polygon if available
+      if (item.polygon && item.polygon.length > 2) {
+        const polygonCoords: LatLngExpression[] = item.polygon.map(coord => [
+          coord.latitude,
+          coord.longitude,
+        ])
+        return (
+          <Polygon
+            key={item.id}
+            positions={polygonCoords}
+            pathOptions={{
+              color: isSelected ? '#facc15' : color,
+              fillColor: color,
+              fillOpacity: isSelected ? 0.6 : fillOpacity,
+              weight: isSelected ? 4 : 1.5,
+            }}
+          />
+        )
+      }
+
+      // Render circle if radius is available
+      if (item.coordinates && item.radius) {
+        const center: LatLngExpression = [
+          item.coordinates.latitude,
+          item.coordinates.longitude,
+        ]
+        // Convert radius from nautical miles to meters (1 NM = 1852 meters)
+        const radiusMeters = item.radius * 1852
+
+        return (
+          <Circle
+            key={item.id}
+            center={center}
+            radius={radiusMeters}
+            pathOptions={{
+              color: isSelected ? '#facc15' : color,
+              fillColor: color,
+              fillOpacity: isSelected ? 0.6 : fillOpacity,
+              weight: isSelected ? 4 : 1.5,
+            }}
+          />
+        )
+      }
+
+      // Fallback: render a small marker if only coordinates available
+      if (item.coordinates) {
+        const center: LatLngExpression = [
+          item.coordinates.latitude,
+          item.coordinates.longitude,
+        ]
+        const radiusMeters = 1852 // 1 nautical mile default
+
+        return (
+          <Circle
+            key={item.id}
+            center={center}
+            radius={radiusMeters}
+            pathOptions={{
+              color: isSelected ? '#facc15' : color,
+              fillColor: color,
+              fillOpacity: isSelected ? 0.6 : fillOpacity,
+              weight: isSelected ? 4 : 1.5,
+            }}
+          />
+        )
+      }
+
+      return null
+    })
+  }, [allAirspaces, visibleTypes, mapBounds, layers, selectedAirspaceId])
+
+  // Memoize allAirspaceData for SidePanel
+  const allAirspaceData = useMemo(() => [
+    { id: 'base-us', name: 'US Airspace', data: initialData },
+    ...uploadedFiles
+  ], [initialData, uploadedFiles])
+
+  // Memoize currentFiles for SidePanel
+  const currentFiles = useMemo(() => {
+    // Extract unique files and their metadata from allAirspaceData
+    const fileMap = new Map<string, { name: string; source: string; size?: number; date?: string }>()
+
+    // Basic check for base airspace (from initialData)
+    initialData.forEach(item => {
+      if (item.metadata && !fileMap.has(item.metadata.fileName)) {
+        fileMap.set(item.metadata.fileName, {
+          name: item.metadata.fileName,
+          source: item.metadata.source,
+          size: item.metadata.fileSize,
+          date: item.metadata.lastModified
+        })
+      }
+    })
+
+    // Check uploaded files
+    uploadedFiles.forEach(file => {
+      const firstItem = file.data[0]
+      if (firstItem?.metadata) {
+        fileMap.set(file.name, {
+          name: file.name,
+          source: firstItem.metadata.source,
+          size: firstItem.metadata.fileSize,
+          date: firstItem.metadata.lastModified
+        })
+      } else {
+        // Fallback for files without metadata property
+        fileMap.set(file.name, {
+          name: file.name,
+          source: 'User Upload',
+        })
+      }
+    })
+
+    return Array.from(fileMap.values())
+  }, [initialData, uploadedFiles])
+
   return (
     <div style={{ height: '100%', width: '100%', position: 'relative' }}>
       <MapContainer
@@ -702,120 +864,32 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
           />
         )}
 
+        {/* Thermal Skyways Layer from thermal.kk7.ch */}
+        {layers.find(l => l.id === 'thermal-skyways')?.visible && (
+          <TileLayer
+            attribution='thermal.kk7.ch <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC-BY-NC-SA</a>'
+            url="https://thermal.kk7.ch/tiles/skyways_all_all/{z}/{x}/{y}.png?src=airplan2"
+            maxNativeZoom={13}
+            maxZoom={19}
+            tms={true}
+            opacity={layers.find(l => l.id === 'thermal-skyways')?.opacity ?? 0.7}
+          />
+        )}
+
+        {/* Thermal Hotspots Layer from thermal.kk7.ch */}
+        {layers.find(l => l.id === 'thermal-hotspots')?.visible && (
+          <TileLayer
+            attribution='thermal.kk7.ch <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC-BY-NC-SA</a>'
+            url="https://thermal.kk7.ch/tiles/thermals_jul_07/{z}/{x}/{y}.png?src=airplan2"
+            maxNativeZoom={12}
+            maxZoom={19}
+            tms={true}
+            opacity={layers.find(l => l.id === 'thermal-hotspots')?.opacity ?? 0.7}
+          />
+        )}
+
         {/* Render base airspace restrictions */}
-        {layers.find(l => l.id === 'airspace')?.visible && useMemo(() => {
-          // Filter airspaces by type and viewport bounds for performance
-          const filtered = allAirspaces
-            .filter(item => {
-              if (!visibleTypes.has(item.type)) return false
-
-              // Skip if no bounds yet
-              if (!mapBounds) return true
-
-              // Optimized viewport filtering using pre-calculated bounds
-              const padding = 2.0
-              const b = item.bounds
-              if (b) {
-                return b.north >= mapBounds.south - padding &&
-                  b.south <= mapBounds.north + padding &&
-                  b.east >= mapBounds.west - padding &&
-                  b.west <= mapBounds.east + padding
-              }
-
-              // Fallback filtering if bounds missing
-              if (item.polygon && item.polygon.length > 0) {
-                return item.polygon.some(coord =>
-                  coord.latitude >= mapBounds.south - padding &&
-                  coord.latitude <= mapBounds.north + padding &&
-                  coord.longitude >= mapBounds.west - padding &&
-                  coord.longitude <= mapBounds.east + padding
-                )
-              }
-
-              return true
-            })
-
-          return filtered.map((item) => {
-            if (!item.coordinates && !item.polygon) return null
-
-            const color = getAirspaceColor(item.type)
-            const baseOpacity = getFillOpacity(item.type)
-            const layerOpacity = layers.find(l => l.id === 'airspace')?.opacity || 1.0
-            const fillOpacity = baseOpacity * layerOpacity
-            const isSelected = Array.isArray(selectedAirspaceId)
-              ? selectedAirspaceId.includes(item.id)
-              : selectedAirspaceId === item.id
-
-            // Render polygon if available
-            if (item.polygon && item.polygon.length > 2) {
-              const polygonCoords: LatLngExpression[] = item.polygon.map(coord => [
-                coord.latitude,
-                coord.longitude,
-              ])
-              return (
-                <Polygon
-                  key={item.id}
-                  positions={polygonCoords}
-                  pathOptions={{
-                    color: isSelected ? '#facc15' : color,
-                    fillColor: color,
-                    fillOpacity: isSelected ? 0.6 : fillOpacity,
-                    weight: isSelected ? 4 : 1.5,
-                  }}
-                />
-              )
-            }
-
-            // Render circle if radius is available
-            if (item.coordinates && item.radius) {
-              const center: LatLngExpression = [
-                item.coordinates.latitude,
-                item.coordinates.longitude,
-              ]
-              // Convert radius from nautical miles to meters (1 NM = 1852 meters)
-              const radiusMeters = item.radius * 1852
-
-              return (
-                <Circle
-                  key={item.id}
-                  center={center}
-                  radius={radiusMeters}
-                  pathOptions={{
-                    color: isSelected ? '#facc15' : color,
-                    fillColor: color,
-                    fillOpacity: isSelected ? 0.6 : fillOpacity,
-                    weight: isSelected ? 4 : 1.5,
-                  }}
-                />
-              )
-            }
-
-            // Fallback: render a small marker if only coordinates available
-            if (item.coordinates) {
-              const center: LatLngExpression = [
-                item.coordinates.latitude,
-                item.coordinates.longitude,
-              ]
-              const radiusMeters = 1852 // 1 nautical mile default
-
-              return (
-                <Circle
-                  key={item.id}
-                  center={center}
-                  radius={radiusMeters}
-                  pathOptions={{
-                    color: isSelected ? '#facc15' : color,
-                    fillColor: color,
-                    fillOpacity: isSelected ? 0.6 : fillOpacity,
-                    weight: isSelected ? 4 : 1.5,
-                  }}
-                />
-              )
-            }
-
-            return null
-          })
-        }, [allAirspaces, visibleTypes, mapBounds, layers, selectedAirspaceId, handleMapClick])}
+        {layers.find(l => l.id === 'airspace')?.visible && airspaceLayer}
 
         {/* Preview circle following cursor */}
         {cursorPosition && !clickedPoint && (
@@ -947,50 +1021,11 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         selectedBasemap={selectedBasemap}
         onBasemapChange={setSelectedBasemap}
         onFileUpload={handleFileUpload}
-        allAirspaceData={useMemo(() => [
-          { id: 'base-us', name: 'US Airspace', data: initialData },
-          ...uploadedFiles
-        ], [initialData, uploadedFiles])}
+        allAirspaceData={allAirspaceData}
         selectedAirspaceId={selectedAirspaceId}
         onAirspaceSelect={handleAirspaceSelect}
         onSearchLocation={handleSearchLocation}
-        currentFiles={useMemo(() => {
-          // Extract unique files and their metadata from allAirspaceData
-          const fileMap = new Map<string, { name: string; source: string; size?: number; date?: string }>()
-
-          // Basic check for base airspace (from initialData)
-          initialData.forEach(item => {
-            if (item.metadata && !fileMap.has(item.metadata.fileName)) {
-              fileMap.set(item.metadata.fileName, {
-                name: item.metadata.fileName,
-                source: item.metadata.source,
-                size: item.metadata.fileSize,
-                date: item.metadata.lastModified
-              })
-            }
-          })
-
-          // Check uploaded files
-          uploadedFiles.forEach(file => {
-            const firstItem = file.data[0]
-            if (firstItem?.metadata) {
-              fileMap.set(file.name, {
-                name: file.name,
-                source: firstItem.metadata.source,
-                size: firstItem.metadata.fileSize,
-                date: firstItem.metadata.lastModified
-              })
-            } else {
-              // Fallback for files without metadata property
-              fileMap.set(file.name, {
-                name: file.name,
-                source: 'User Upload',
-              })
-            }
-          })
-
-          return Array.from(fileMap.values())
-        }, [initialData, uploadedFiles])}
+        currentFiles={currentFiles}
         airspaceTypes={allTypes}
         visibleTypes={visibleTypes}
         onTypeToggle={handleTypeToggle}

@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Line, Text, Billboard, Html } from '@react-three/drei'
-import { BufferAttribute, DoubleSide, BufferGeometry, Color, IncrementStencilOp, NotEqualStencilFunc } from 'three'
+import { BufferAttribute, DoubleSide, BufferGeometry, Color, IncrementStencilOp, NotEqualStencilFunc, MOUSE } from 'three'
 import type { AirspaceData } from '@/lib/types'
 
 export interface ElevationCellData {
@@ -28,6 +28,14 @@ interface ElevationCell {
     lat: number
     lon: number
     elevation: number | null  // null means still loading
+}
+
+interface ThermalHotspot {
+    x: number  // 3D position
+    z: number  // 3D position
+    lat: number
+    lon: number
+    intensity: number  // 0-1 strength
 }
 
 function CylinderWalls() {
@@ -147,15 +155,17 @@ function bilinearInterpolate(
     return e0 * (1 - tzc) + e1 * tzc
 }
 
-function ElevationMosaic({ cells, minElev, maxElev, isLoading }: { 
+function ElevationMosaic({ cells, minElev, maxElev, isLoading, gridSize, radiusKm }: { 
     cells: ElevationCell[], 
     minElev: number, 
     maxElev: number,
-    isLoading: boolean
+    isLoading: boolean,
+    gridSize: number,
+    radiusKm: number
 }) {
-    const gridSize = 6
     const cylinderRadius = 1.5
-    const subdivisions = 12  // Low-poly resolution
+    // Scale subdivisions based on grid size for appropriate detail
+    const subdivisions = Math.max(12, Math.min(48, gridSize * 2))
     
     // Find the maximum positive elevation for normalization
     const maxPositiveElev = useMemo(() => {
@@ -192,17 +202,18 @@ function ElevationMosaic({ cells, minElev, maxElev, isLoading }: {
         const size = cylinderRadius * 2
         const step = size / subdivisions
         const maxHeight = (size / gridSize) * 0.95
+        const verticalExaggeration = 4.0  // 4x vertical exaggeration for terrain
         
         // For flat shading, each triangle has its own vertices (no sharing)
         const vertices: number[] = []
         const colors: number[] = []
         
-        // Helper to get height at a point
+        // Helper to get height at a point (with vertical exaggeration)
         const getHeight = (x: number, z: number): number => {
             const dist = Math.sqrt(x * x + z * z)
             if (dist > cylinderRadius) return 0
             const elev = bilinearInterpolate(x, z, cells, gridSize, cylinderRadius)
-            return elev > 0 ? (elev / maxPositiveElev) * maxHeight : 0
+            return elev > 0 ? (elev / maxPositiveElev) * maxHeight * verticalExaggeration : 0
         }
         
         // Helper to get elevation at a point
@@ -249,7 +260,7 @@ function ElevationMosaic({ cells, minElev, maxElev, isLoading }: {
         geometry.computeVertexNormals()
         
         return geometry
-    }, [cells, minElev, maxElev, maxPositiveElev])
+    }, [cells, minElev, maxElev, maxPositiveElev, gridSize, subdivisions])
 
     // Get height at a specific cell for labels
     const getCellHeight = (cell: ElevationCell) => {
@@ -942,6 +953,223 @@ function AirspaceVolumes({
     )
 }
 
+// Get thermal color based on intensity (0-1)
+// Strong thermals (high intensity) = deep orange/red
+// Weak thermals (low intensity) = pale yellow
+function getThermalColor(intensity: number): { core: string; inner: string; outer: string; glow: string } {
+    // Clamp intensity between 0 and 1
+    const t = Math.max(0, Math.min(1, intensity))
+    
+    // Deep orange (strong) to pale yellow (weak)
+    // Strong: #ff4500 (orangered) -> #ff8c00 (darkorange) -> #ffd700 (gold) -> #ffeb99 (pale yellow)
+    
+    if (t > 0.7) {
+        // Strong thermal - deep orange to red-orange
+        return {
+            core: '#ff4500',   // OrangeRed
+            inner: '#ff6600',
+            outer: '#ff8c00',
+            glow: '#ffaa33'
+        }
+    } else if (t > 0.4) {
+        // Medium thermal - orange
+        return {
+            core: '#ff8c00',   // DarkOrange
+            inner: '#ffa500',
+            outer: '#ffb833',
+            glow: '#ffcc66'
+        }
+    } else if (t > 0.2) {
+        // Weak thermal - gold/yellow-orange
+        return {
+            core: '#ffc000',   // Gold-orange
+            inner: '#ffd700',
+            outer: '#ffe066',
+            glow: '#ffeb99'
+        }
+    } else {
+        // Very weak thermal - pale yellow
+        return {
+            core: '#ffd700',   // Gold
+            inner: '#ffe066',
+            outer: '#ffeb99',
+            glow: '#fff5cc'
+        }
+    }
+}
+
+// Thermal Hotspots - glowing cylinders colored by intensity
+function ThermalHotspots({ hotspots }: { hotspots: ThermalHotspot[] }) {
+    if (hotspots.length === 0) return null
+    
+    const cylinderHeight = 4  // Full height of the cylinder (from -2 to 2)
+    
+    // Group hotspots by intensity category for labeling
+    const labelData = useMemo(() => {
+        if (hotspots.length === 0) return null
+        
+        // Find the strongest hotspot for the label connection
+        const strongestHotspot = hotspots.reduce((best, h) => 
+            h.intensity > best.intensity ? h : best, hotspots[0])
+        
+        // Calculate average intensity for label text
+        const avgIntensity = hotspots.reduce((sum, h) => sum + h.intensity, 0) / hotspots.length
+        
+        // Determine label text based on intensity
+        let labelText = 'Thermals'
+        if (avgIntensity > 0.7) {
+            labelText = 'Strong Thermals'
+        } else if (avgIntensity > 0.4) {
+            labelText = 'Thermals'
+        } else {
+            labelText = 'Weak Thermals'
+        }
+        
+        const colors = getThermalColor(avgIntensity)
+        
+        return {
+            text: labelText,
+            count: hotspots.length,
+            color: colors.core,
+            connectionPoint: [strongestHotspot.x, 0, strongestHotspot.z] as [number, number, number],
+            labelPosition: [-2.5, 0, 0] as [number, number, number]  // Left side of cylinder
+        }
+    }, [hotspots])
+    
+    return (
+        <group>
+            {/* Render thermal cylinders */}
+            {hotspots.map((hotspot, idx) => {
+                // Scale the hotspot radius based on intensity (0.04 to 0.12)
+                const hotspotRadius = 0.04 + hotspot.intensity * 0.08
+                
+                // Get colors based on intensity
+                const colors = getThermalColor(hotspot.intensity)
+                
+                // Opacity also scales with intensity (stronger = more visible)
+                const baseOpacity = 0.3 + hotspot.intensity * 0.4
+                
+                // Create glowing effect with multiple layered cylinders
+                return (
+                    <group key={idx} position={[hotspot.x, 0, hotspot.z]}>
+                        {/* Core cylinder */}
+                        <mesh>
+                            <cylinderGeometry args={[hotspotRadius, hotspotRadius, cylinderHeight, 16, 1, true]} />
+                            <meshBasicMaterial 
+                                color={colors.core}
+                                transparent
+                                opacity={baseOpacity}
+                                depthWrite={false}
+                            />
+                        </mesh>
+                        
+                        {/* Inner glow layer */}
+                        <mesh>
+                            <cylinderGeometry args={[hotspotRadius * 1.5, hotspotRadius * 1.5, cylinderHeight, 16, 1, true]} />
+                            <meshBasicMaterial 
+                                color={colors.inner}
+                                transparent
+                                opacity={baseOpacity * 0.5}
+                                depthWrite={false}
+                            />
+                        </mesh>
+                        
+                        {/* Outer glow layer */}
+                        <mesh>
+                            <cylinderGeometry args={[hotspotRadius * 2.5, hotspotRadius * 2.5, cylinderHeight, 16, 1, true]} />
+                            <meshBasicMaterial 
+                                color={colors.outer}
+                                transparent
+                                opacity={baseOpacity * 0.25}
+                                depthWrite={false}
+                            />
+                        </mesh>
+                        
+                        {/* Very outer diffuse glow */}
+                        <mesh>
+                            <cylinderGeometry args={[hotspotRadius * 4, hotspotRadius * 4, cylinderHeight, 16, 1, true]} />
+                            <meshBasicMaterial 
+                                color={colors.glow}
+                                transparent
+                                opacity={baseOpacity * 0.12}
+                                depthWrite={false}
+                            />
+                        </mesh>
+                        
+                        {/* Top and bottom caps for visual grounding */}
+                        <mesh position={[0, cylinderHeight / 2, 0]} rotation={[Math.PI / 2, 0, 0]}>
+                            <circleGeometry args={[hotspotRadius * 1.5, 16]} />
+                            <meshBasicMaterial 
+                                color={colors.inner}
+                                transparent
+                                opacity={baseOpacity * 0.6}
+                                depthWrite={false}
+                            />
+                        </mesh>
+                        <mesh position={[0, -cylinderHeight / 2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                            <circleGeometry args={[hotspotRadius * 1.5, 16]} />
+                            <meshBasicMaterial 
+                                color={colors.core}
+                                transparent
+                                opacity={baseOpacity * 0.7}
+                                depthWrite={false}
+                            />
+                        </mesh>
+                    </group>
+                )
+            })}
+            
+            {/* Label with connector line */}
+            {labelData && (
+                <group>
+                    {/* Connector line from label to strongest thermal */}
+                    <Line
+                        points={[labelData.labelPosition, labelData.connectionPoint]}
+                        color={labelData.color}
+                        lineWidth={1.5}
+                        dashed={true}
+                        dashSize={0.08}
+                        gapSize={0.04}
+                    />
+                    
+                    {/* Small marker dot at line endpoint on thermal */}
+                    <mesh position={labelData.connectionPoint}>
+                        <sphereGeometry args={[0.04, 8, 8]} />
+                        <meshBasicMaterial color={labelData.color} />
+                    </mesh>
+                    
+                    {/* Static HTML label - doesn't rotate with the scene */}
+                    <Html
+                        position={[
+                            labelData.labelPosition[0] - 0.2,
+                            labelData.labelPosition[1],
+                            labelData.labelPosition[2]
+                        ]}
+                        style={{
+                            pointerEvents: 'none',
+                            whiteSpace: 'nowrap',
+                            transform: 'translateY(-50%) translateX(-100%)'
+                        }}
+                        transform={false}
+                        sprite={false}
+                    >
+                        <div style={{
+                            fontSize: '13px',
+                            fontWeight: 'bold',
+                            color: labelData.color,
+                            textShadow: '0 0 3px white, 0 0 3px white, 0 0 3px white, 0 0 3px white',
+                            userSelect: 'none',
+                            lineHeight: 1
+                        }}>
+                            {labelData.text} ({labelData.count})
+                        </div>
+                    </Html>
+                </group>
+            )}
+        </group>
+    )
+}
+
 // Central altitude scale - vertical line with graduation marks at airspace boundaries
 function CentralAltitudeScale({ minAlt = 0, maxAlt = 18000, airspaces = [] }: { 
     minAlt?: number, 
@@ -1063,6 +1291,8 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
     const [isLoading, setIsLoading] = useState(false)
     const [minElev, setMinElev] = useState(0)
     const [maxElev, setMaxElev] = useState(100)
+    const [thermalHotspots, setThermalHotspots] = useState<ThermalHotspot[]>([])
+    const [currentGridSize, setCurrentGridSize] = useState(6)
 
     useEffect(() => {
         setMounted(true)
@@ -1078,19 +1308,31 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
         const fetchElevationGrid = async () => {
             setIsLoading(true)
             
-            const gridSize = 6 // 6x6 grid = 36 cells
+            // Calculate grid size based on 500m cells
+            // Diameter in km = radiusKm * 2
+            // Number of cells = diameter / 0.5km (500m)
+            const cellSizeKm = 0.5  // 500m cells
+            const diameterKm = radiusKm * 2
+            const gridSize = Math.max(4, Math.ceil(diameterKm / cellSizeKm))  // Minimum 4x4 grid
+            
+            // Limit grid size to prevent API overload (max ~400 cells = 20x20)
+            const cappedGridSize = Math.min(gridSize, 20)
+            setCurrentGridSize(cappedGridSize)
+            
             const cylinderRadius = 1.5
-            const cellSize = 3 / gridSize
+            const cellSize = 3 / cappedGridSize  // Size in 3D units
             
             // Convert km to degrees (approximate)
             const kmToDegLat = 1 / 111
             const kmToDegLon = 1 / (111 * Math.cos(clickedPoint.lat * Math.PI / 180))
             
+            console.log(`[AirspaceCylinder] Grid: ${cappedGridSize}x${cappedGridSize} for ${radiusKm}km radius (${cellSizeKm}km cells)`)
+            
             // Generate grid cell centers and their corresponding lat/lon
             const cellRequests: { x: number; z: number; lat: number; lon: number }[] = []
             
-            for (let i = 0; i < gridSize; i++) {
-                for (let j = 0; j < gridSize; j++) {
+            for (let i = 0; i < cappedGridSize; i++) {
+                for (let j = 0; j < cappedGridSize; j++) {
                     // Cell center in 3D space (-1.5 to 1.5)
                     const x = -cylinderRadius + cellSize / 2 + i * cellSize
                     const z = -cylinderRadius + cellSize / 2 + j * cellSize
@@ -1214,6 +1456,209 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
         fetchElevationGrid()
     }, [clickedPoint?.lat, clickedPoint?.lon, radiusKm])
 
+    // Fetch thermal hotspots from thermal.kk7.ch tiles
+    useEffect(() => {
+        if (!clickedPoint) {
+            setThermalHotspots([])
+            return
+        }
+
+        const fetchThermalHotspots = async () => {
+            const cylinderRadius = 1.5
+            const kmToDegLat = 1 / 111
+            const kmToDegLon = 1 / (111 * Math.cos(clickedPoint.lat * Math.PI / 180))
+            
+            // Determine appropriate zoom level based on radius
+            // At zoom 12, one tile covers roughly 10km at mid-latitudes
+            const zoom = radiusKm <= 2 ? 13 : radiusKm <= 5 ? 12 : 11
+            
+            // Convert lat/lon to tile coordinates
+            const lat2tile = (lat: number, z: number) => {
+                return Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, z))
+            }
+            const lon2tile = (lon: number, z: number) => {
+                return Math.floor((lon + 180) / 360 * Math.pow(2, z))
+            }
+            
+            // Get tile coordinates for center point
+            const tileX = lon2tile(clickedPoint.lon, zoom)
+            const tileY = lat2tile(clickedPoint.lat, zoom)
+            
+            // TMS y-coordinate is flipped
+            const tmsY = Math.pow(2, zoom) - 1 - tileY
+            
+            // Calculate tile bounds for coordinate conversion
+            const tile2lon = (x: number, z: number) => {
+                return x / Math.pow(2, z) * 360 - 180
+            }
+            const tile2lat = (y: number, z: number) => {
+                const n = Math.PI - 2 * Math.PI * y / Math.pow(2, z)
+                return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)))
+            }
+            
+            const tileLonMin = tile2lon(tileX, zoom)
+            const tileLonMax = tile2lon(tileX + 1, zoom)
+            const tileLatMax = tile2lat(tileY, zoom)
+            const tileLatMin = tile2lat(tileY + 1, zoom)
+            
+            try {
+                // Fetch the thermal tile image through our proxy to avoid CORS issues
+                const tileUrl = `/api/thermal-tile?z=${zoom}&x=${tileX}&y=${tmsY}`
+                
+                console.log('[AirspaceCylinder] Fetching thermal tile:', tileUrl)
+                
+                // Create an off-screen canvas to analyze the image
+                const img = new Image()
+                
+                await new Promise<void>((resolve, reject) => {
+                    img.onload = () => resolve()
+                    img.onerror = (e) => {
+                        console.error('[AirspaceCylinder] Image load error:', e)
+                        reject(new Error('Failed to load thermal tile'))
+                    }
+                    img.src = tileUrl
+                })
+                
+                const canvas = document.createElement('canvas')
+                canvas.width = img.width
+                canvas.height = img.height
+                const ctx = canvas.getContext('2d')
+                if (!ctx) return
+                
+                ctx.drawImage(img, 0, 0)
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+                const data = imageData.data
+                
+                console.log('[AirspaceCylinder] Thermal tile loaded, size:', canvas.width, 'x', canvas.height)
+                
+                // Scan for thermal pixels
+                // thermal.kk7.ch color scale: blue (cold) -> cyan -> green -> yellow -> orange -> red (hot)
+                const hotspots: ThermalHotspot[] = []
+                const gridSize = 6 // Sample every 6 pixels for finer detection
+                
+                let pixelsScanned = 0
+                let hotPixels = 0
+                
+                for (let py = 0; py < canvas.height; py += gridSize) {
+                    for (let px = 0; px < canvas.width; px += gridSize) {
+                        const i = (py * canvas.width + px) * 4
+                        const r = data[i]
+                        const g = data[i + 1]
+                        const b = data[i + 2]
+                        const a = data[i + 3]
+                        
+                        pixelsScanned++
+                        
+                        // Skip fully transparent pixels
+                        if (a < 30) continue
+                        
+                        // Calculate thermal intensity based on color
+                        // Red/orange = high intensity (strong thermal)
+                        // Yellow/green = medium intensity
+                        // Cyan/blue = low intensity (weak thermal or sink)
+                        
+                        // We want to detect any thermal activity, not just strong ones
+                        // Skip pure blue (cold/sink areas)
+                        const isBlueish = b > r && b > g
+                        if (isBlueish) continue
+                        
+                        // Calculate "warmth" - how much the color leans toward red/orange/yellow
+                        // Higher red relative to blue = warmer
+                        const warmth = (r + g * 0.5) / Math.max(1, r + g + b)
+                        
+                        // Minimum warmth threshold to be considered a thermal
+                        if (warmth < 0.3) continue
+                        
+                        hotPixels++
+                        
+                        // Calculate lat/lon from pixel position
+                        const pixelLon = tileLonMin + (px / canvas.width) * (tileLonMax - tileLonMin)
+                        const pixelLat = tileLatMax - (py / canvas.height) * (tileLatMax - tileLatMin)
+                        
+                        // Check if within our search radius
+                        const latDiff = pixelLat - clickedPoint.lat
+                        const lonDiff = pixelLon - clickedPoint.lon
+                        const distKm = Math.sqrt(
+                            (latDiff / kmToDegLat) ** 2 + 
+                            (lonDiff / kmToDegLon) ** 2
+                        )
+                        
+                        if (distKm <= radiusKm) {
+                            // Convert to 3D cylinder coordinates
+                            const x = (lonDiff / kmToDegLon / radiusKm) * cylinderRadius
+                            const z = -(latDiff / kmToDegLat / radiusKm) * cylinderRadius
+                            
+                            // Calculate intensity based on color warmth
+                            // Red-dominant = highest intensity
+                            // Orange = high intensity  
+                            // Yellow = medium intensity
+                            // Green/cyan-ish = lower intensity
+                            let intensity = 0
+                            
+                            if (r > g && r > b) {
+                                // Red dominant - strong thermal
+                                intensity = 0.7 + (r / 255) * 0.3
+                            } else if (r > b && g > b) {
+                                // Yellow/orange - medium-high thermal
+                                intensity = 0.4 + ((r + g) / 510) * 0.3
+                            } else if (g > b) {
+                                // Green-ish - weak thermal
+                                intensity = 0.15 + (g / 255) * 0.25
+                            } else {
+                                // Other - very weak
+                                intensity = 0.1
+                            }
+                            
+                            hotspots.push({
+                                x,
+                                z,
+                                lat: pixelLat,
+                                lon: pixelLon,
+                                intensity: Math.min(1, intensity)
+                            })
+                        }
+                    }
+                }
+                
+                console.log('[AirspaceCylinder] Scanned', pixelsScanned, 'pixels,', hotPixels, 'hot pixels found')
+                console.log('[AirspaceCylinder] Found', hotspots.length, 'thermal hotspots within radius')
+                
+                // Cluster nearby hotspots to avoid too many overlapping cylinders
+                const clusteredHotspots: ThermalHotspot[] = []
+                const clusterRadius = 0.15 // Minimum distance between hotspots in 3D units
+                
+                for (const hotspot of hotspots) {
+                    let merged = false
+                    for (const existing of clusteredHotspots) {
+                        const dist = Math.sqrt((hotspot.x - existing.x) ** 2 + (hotspot.z - existing.z) ** 2)
+                        if (dist < clusterRadius) {
+                            // Merge: keep the stronger one, average position
+                            if (hotspot.intensity > existing.intensity) {
+                                existing.x = (existing.x + hotspot.x) / 2
+                                existing.z = (existing.z + hotspot.z) / 2
+                                existing.intensity = Math.max(existing.intensity, hotspot.intensity)
+                            }
+                            merged = true
+                            break
+                        }
+                    }
+                    if (!merged) {
+                        clusteredHotspots.push({ ...hotspot })
+                    }
+                }
+                
+                console.log('[AirspaceCylinder] Clustered to', clusteredHotspots.length, 'thermal hotspots')
+                setThermalHotspots(clusteredHotspots)
+                
+            } catch (err) {
+                console.error('[AirspaceCylinder] Failed to fetch thermal hotspots:', err)
+                setThermalHotspots([])
+            }
+        }
+        
+        fetchThermalHotspots()
+    }, [clickedPoint?.lat, clickedPoint?.lon, radiusKm])
+
     // Expand button component
     const ExpandButton = () => (
         <button
@@ -1255,12 +1700,15 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
     const CanvasContent = () => (
         <>
             <color attach="background" args={['#ffffff']} />
-            <ambientLight intensity={0.5} />
-            <pointLight position={[10, 10, 10]} />
+                    <ambientLight intensity={0.5} />
+                    <pointLight position={[10, 10, 10]} />
             
             <CylinderWalls />
             
-            <ElevationMosaic cells={elevationCells} minElev={minElev} maxElev={maxElev} isLoading={isLoading} />
+            <ElevationMosaic cells={elevationCells} minElev={minElev} maxElev={maxElev} isLoading={isLoading} gridSize={currentGridSize} radiusKm={radiusKm} />
+            
+            {/* Thermal hotspots */}
+            <ThermalHotspots hotspots={thermalHotspots} />
             
             <RadiusLabel radiusKm={radiusKm} />
             
@@ -1276,13 +1724,20 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
                 />
             )}
             
-            <OrbitControls
+                    <OrbitControls
                 enablePan={true}
-                enableZoom={true}
+                        enableZoom={true}
+                enableRotate={true}
                 minPolarAngle={Math.PI / 4}
                 maxPolarAngle={Math.PI / 2}
                 screenSpacePanning={true}
-                panSpeed={0.8}
+                panSpeed={0.5}
+                rotateSpeed={0.8}
+                mouseButtons={{
+                    LEFT: MOUSE.ROTATE,
+                    MIDDLE: MOUSE.DOLLY,
+                    RIGHT: MOUSE.PAN
+                }}
             />
         </>
     )
@@ -1328,7 +1783,7 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
                     </h3>
                     <button
                         onClick={onToggleExpand}
-                        style={{
+                    style={{
                             padding: '8px 16px',
                             backgroundColor: '#374151',
                             color: '#ffffff',
