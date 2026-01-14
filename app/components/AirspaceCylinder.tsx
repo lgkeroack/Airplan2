@@ -1277,10 +1277,12 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
             )}
             
             <OrbitControls
-                enablePan={false}
+                enablePan={true}
                 enableZoom={true}
                 minPolarAngle={Math.PI / 4}
                 maxPolarAngle={Math.PI / 2}
+                screenSpacePanning={true}
+                panSpeed={0.8}
             />
         </>
     )
