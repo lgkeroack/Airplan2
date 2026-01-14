@@ -166,17 +166,29 @@ export function findAirspacesNearby(
       return dist <= (airspace.radius + searchRadiusNM)
     }
 
-    // fallback for polygons: check if any point is close enough
-    // (This is a simplified check - finding min distance to polygon is complex)
-    // We check if bounding box is close enough as a quick filter
-    if (airspace.bounds) {
-      const b = airspace.bounds
-      const latDegreeDist = 111 // approx km per degree
-      const latDelta = radiusKM / latDegreeDist
+    // For polygons: compute bounds from polygon if not available
+    let bounds = airspace.bounds
+    if (!bounds && airspace.polygon && airspace.polygon.length > 0) {
+      let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity
+      for (const p of airspace.polygon) {
+        minLat = Math.min(minLat, p.latitude)
+        maxLat = Math.max(maxLat, p.latitude)
+        minLon = Math.min(minLon, p.longitude)
+        maxLon = Math.max(maxLon, p.longitude)
+      }
+      bounds = { north: maxLat, south: minLat, east: maxLon, west: minLon }
+    }
 
-      // Rough bounding box expand
-      if (point.latitude > b.north + latDelta || point.latitude < b.south - latDelta ||
-        point.longitude > b.east + latDelta || point.longitude < b.west - latDelta) {
+    // Check if bounding box is close enough
+    if (bounds) {
+      const latDegreeDist = 111 // approx km per degree
+      const lonDegreeDist = 111 * Math.cos(point.latitude * Math.PI / 180) // adjust for latitude
+      const latDelta = radiusKM / latDegreeDist
+      const lonDelta = radiusKM / lonDegreeDist
+
+      // Check if search circle could overlap with bounding box
+      if (point.latitude > bounds.north + latDelta || point.latitude < bounds.south - latDelta ||
+        point.longitude > bounds.east + lonDelta || point.longitude < bounds.west - lonDelta) {
         return false
       }
       return true // If close to bounds, include it (optimistic)

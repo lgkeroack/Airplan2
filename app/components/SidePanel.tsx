@@ -4,6 +4,7 @@ import { useState, useRef, useMemo, useEffect } from 'react'
 import type { AirspaceData } from '@/lib/types'
 import { findAirspacesAtPoint, findAirspacesNearby } from '@/lib/point-in-airspace'
 import dynamic from 'next/dynamic'
+import type { ElevationCellData } from './AirspaceCylinder'
 
 const AirspaceCylinder = dynamic(() => import('./AirspaceCylinder'), { ssr: false })
 
@@ -31,6 +32,9 @@ interface SidePanelProps {
   selectedAirspaceId?: string | string[] | null
   onAirspaceSelect?: (airspaceIds: string | string[]) => void
   onSearchLocation?: (query: string) => void
+  fetchRadius?: number
+  onFetchRadiusChange?: (radius: number) => void
+  onElevationCellsChange?: (cells: ElevationCellData[], minElev: number, maxElev: number) => void
 }
 
 export default function SidePanel({
@@ -50,6 +54,9 @@ export default function SidePanel({
   selectedAirspaceId,
   onAirspaceSelect,
   onSearchLocation,
+  fetchRadius: fetchRadiusProp = 1,
+  onFetchRadiusChange,
+  onElevationCellsChange,
 }: SidePanelProps) {
   const [activeTab, setActiveTab] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings'>('layers')
   const [activeTabState, setActiveTabState] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings'>('layers')
@@ -57,7 +64,14 @@ export default function SidePanel({
   useEffect(() => { setActiveTabState(activeTab) }, [activeTab])
 
   const [searchHistory, setSearchHistory] = useState<string[]>([])
-  const [fetchRadius, setFetchRadius] = useState<number>(1) // Default 1km
+  
+  // Use prop value for fetchRadius, with local state as fallback
+  const fetchRadius = fetchRadiusProp
+  const setFetchRadius = (value: number) => {
+    if (onFetchRadiusChange) {
+      onFetchRadiusChange(value)
+    }
+  }
   const [searchQuery, setSearchQuery] = useState('')
   const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [isUploading, setIsUploading] = useState(false)
@@ -65,6 +79,7 @@ export default function SidePanel({
   const [elevation, setElevation] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isMobile, setIsMobile] = useState(false)
+  const [is3DExpanded, setIs3DExpanded] = useState(false)
 
   // Handle responsive layout
   useEffect(() => {
@@ -107,13 +122,23 @@ export default function SidePanel({
       allAirspaces.push(...source.data)
     })
 
-    return findAirspacesNearby({ latitude: clickedPoint.lat, longitude: clickedPoint.lon }, fetchRadius, allAirspaces)
+    console.log('[SidePanel] Searching for airspaces at', clickedPoint, 'with radius', fetchRadius, 'km')
+    console.log('[SidePanel] Total airspaces to search:', allAirspaces.length)
+    
+    const found = findAirspacesNearby({ latitude: clickedPoint.lat, longitude: clickedPoint.lon }, fetchRadius, allAirspaces)
       .sort((a, b) => {
         // Sort by altitude floor (lowest first)
         const aFloor = a.altitude?.floor || 0
         const bFloor = b.altitude?.floor || 0
         return aFloor - bFloor
       })
+    
+    console.log('[SidePanel] Found', found.length, 'airspaces nearby')
+    found.forEach((a, i) => {
+      console.log(`  [${i}] ${a.type} (${a.id}): floor=${a.altitude?.floor}, ceiling=${a.altitude?.ceiling}`)
+    })
+    
+    return found
   }, [clickedPoint, allAirspaceData, fetchRadius])
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1043,7 +1068,15 @@ export default function SidePanel({
                         )}
 
                         {/* 3D Visualization */}
-                        <AirspaceCylinder />
+                        <AirspaceCylinder 
+                          clickedPoint={clickedPoint} 
+                          radiusKm={fetchRadius} 
+                          onElevationCellsChange={onElevationCellsChange}
+                          hasAirspace={airspacesAtPoint.length > 0}
+                          airspacesAtPoint={airspacesAtPoint}
+                          isExpanded={is3DExpanded}
+                          onToggleExpand={() => setIs3DExpanded(!is3DExpanded)}
+                        />
                       </>
                     ) : (
                       <div style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>

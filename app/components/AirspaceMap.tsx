@@ -1,13 +1,14 @@
 'use client'
 
-import { MapContainer, TileLayer, Circle, Polygon, Popup, useMap, useMapEvents } from 'react-leaflet'
-import L, { LatLngExpression, Map as LeafletMap } from 'leaflet'
+import { MapContainer, TileLayer, Circle, Polygon, Popup, useMap, useMapEvents, Rectangle } from 'react-leaflet'
+import L, { LatLngExpression, LatLngBoundsExpression, Map as LeafletMap } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import SidePanel from './SidePanel'
 import type { AirspaceData } from '@/lib/types'
 import { validateOpenAirFile } from '@/lib/validate-openair'
 import { findAirspacesAtPoint } from '@/lib/point-in-airspace'
+import type { ElevationCellData } from './AirspaceCylinder'
 
 
 interface Layer {
@@ -177,6 +178,9 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
   const [elevation, setElevation] = useState<number | null>(null)
   const [isElevationLoading, setIsElevationLoading] = useState(false)
   const lastClickRef = useRef<{ lat: number; lon: number; time: number } | null>(null)
+  const [fetchRadius, setFetchRadius] = useState<number>(1) // Radius in km for cylinder base
+  const [elevationCells, setElevationCells] = useState<ElevationCellData[]>([])
+  const [elevationRange, setElevationRange] = useState<{ min: number; max: number }>({ min: 0, max: 100 })
 
   // Layer management
   const [layers, setLayers] = useState<Layer[]>([
@@ -659,6 +663,49 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
           })
         }, [allAirspaces, visibleTypes, mapBounds, layers, selectedAirspaceId, handleMapClick])}
 
+        {/* Circle showing cylinder base radius */}
+        {clickedPoint && (
+          <Circle
+            center={[clickedPoint.lat, clickedPoint.lon]}
+            radius={fetchRadius * 1000}  // Convert km to meters
+            pathOptions={{
+              color: '#3b82f6',
+              fillColor: 'transparent',
+              fillOpacity: 0,
+              weight: 2,
+              dashArray: '5, 5',
+            }}
+          />
+        )}
+
+        {/* Elevation grid cells on map - boundaries only, no fill */}
+        {clickedPoint && elevationCells.map((cell, idx) => {
+          // Calculate cell size in degrees
+          const gridSize = 6
+          const kmToDegLat = 1 / 111
+          const kmToDegLon = 1 / (111 * Math.cos(clickedPoint.lat * Math.PI / 180))
+          const cellSizeLat = (fetchRadius * 2 / gridSize) * kmToDegLat
+          const cellSizeLon = (fetchRadius * 2 / gridSize) * kmToDegLon
+          
+          const bounds: LatLngBoundsExpression = [
+            [cell.lat - cellSizeLat / 2, cell.lon - cellSizeLon / 2],
+            [cell.lat + cellSizeLat / 2, cell.lon + cellSizeLon / 2]
+          ]
+          
+          return (
+            <Rectangle
+              key={idx}
+              bounds={bounds}
+              pathOptions={{
+                color: '#6b7280',
+                fill: false,
+                weight: 1,
+                opacity: 0.6,
+              }}
+            />
+          )
+        })}
+
         {/* Single Global Popup for performance - Hide if SidePanel is open */}
         {clickedPoint && !selectedAirspaceId && popupPosition && (
           <Popup
@@ -804,6 +851,12 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         visibleTypes={visibleTypes}
         onTypeToggle={handleTypeToggle}
         clickedPoint={clickedPoint}
+        fetchRadius={fetchRadius}
+        onFetchRadiusChange={setFetchRadius}
+        onElevationCellsChange={(cells, minElev, maxElev) => {
+          setElevationCells(cells)
+          setElevationRange({ min: minElev, max: maxElev })
+        }}
       />
 
     </div>
