@@ -251,3 +251,4 @@ export function findAirspacesInPolygon(
 ): AirspaceData[] {
   return airspaces.filter(airspace => polygonIntersectsAirspace(polygon, airspace))
 }
+

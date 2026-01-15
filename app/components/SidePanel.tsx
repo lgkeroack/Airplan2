@@ -5,10 +5,9 @@ import type { AirspaceData } from '@/lib/types'
 import { findAirspacesAtPoint, findAirspacesNearby, findAirspacesInPolygon } from '@/lib/point-in-airspace'
 import dynamic from 'next/dynamic'
 import type { ElevationCellData } from './AirspaceCylinder'
-import type { PolygonVertex } from './AirspacePolygon'
 
 const AirspaceCylinder = dynamic(() => import('./AirspaceCylinder'), { ssr: false })
-const AirspacePolygon = dynamic(() => import('./AirspacePolygon'), { ssr: false })
+const AirspaceRoute = dynamic(() => import('./AirspaceRoute'), { ssr: false })
 
 interface Layer {
   id: string
@@ -40,7 +39,9 @@ interface SidePanelProps {
   fetchRadius?: number
   onFetchRadiusChange?: (radius: number) => void
   onElevationCellsChange?: (cells: ElevationCellData[], minElev: number, maxElev: number) => void
-  activePolygon?: PolygonVertex[] | null
+  route?: Array<{ lat: number; lon: number }> | null
+  routeCorridor?: Array<{ lat: number; lon: number }> | null
+  routeRadius?: number
 }
 
 export default function SidePanel({
@@ -63,10 +64,12 @@ export default function SidePanel({
   selectedAirspaceId,
   onAirspaceSelect,
   onSearchLocation,
-  fetchRadius: fetchRadiusProp = 1,
+  fetchRadius: fetchRadiusProp = 5,
   onFetchRadiusChange,
   onElevationCellsChange,
-  activePolygon,
+  route,
+  routeCorridor,
+  routeRadius = 1,
 }: SidePanelProps) {
   const [activeTab, setActiveTab] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings'>('layers')
   const [activeTabState, setActiveTabState] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings'>('layers')
@@ -104,7 +107,7 @@ export default function SidePanel({
     return () => window.removeEventListener('resize', checkMobile)
   }, [])
 
-  // Switch to air column tab when point is clicked and fetch elevation
+  // Switch to air column tab when point is clicked or route is completed
   useEffect(() => {
     if (clickedPoint) {
       setActiveTab('aircolumn')
@@ -120,8 +123,10 @@ export default function SidePanel({
           }
         })
         .catch(err => console.error('Elevation fetch failed:', err))
+    } else if (route && route.length > 0) {
+      setActiveTab('aircolumn')
     }
-  }, [clickedPoint])
+  }, [clickedPoint, route])
 
   // Find airspaces at clicked point
   const airspacesAtPoint = useMemo(() => {
@@ -151,19 +156,25 @@ export default function SidePanel({
     return found
   }, [clickedPoint, allAirspaceData, fetchRadius])
 
-  // Find airspaces that intersect with the polygon
-  const airspacesInPolygon = useMemo(() => {
-    if (!activePolygon || activePolygon.length < 3) return []
+  // Find airspaces along route corridor
+  const airspacesAlongRoute = useMemo(() => {
+    if (!routeCorridor || routeCorridor.length < 3) return []
 
     const allAirspaces: AirspaceData[] = []
     allAirspaceData.forEach(source => {
       allAirspaces.push(...source.data)
     })
 
-    console.log('[SidePanel] Searching for airspaces in polygon with', activePolygon.length, 'vertices')
+    // Convert routeCorridor to polygon format (array of {latitude, longitude})
+    const polygon = routeCorridor.map(v => ({
+      latitude: v.lat,
+      longitude: v.lon
+    }))
+
+    console.log('[SidePanel] Searching for airspaces along route corridor with', polygon.length, 'vertices')
     console.log('[SidePanel] Total airspaces to search:', allAirspaces.length)
     
-    const found = findAirspacesInPolygon(activePolygon, allAirspaces)
+    const found = findAirspacesInPolygon(polygon, allAirspaces)
       .sort((a, b) => {
         // Sort by altitude floor (lowest first)
         const aFloor = a.altitude?.floor || 0
@@ -171,13 +182,13 @@ export default function SidePanel({
         return aFloor - bFloor
       })
     
-    console.log('[SidePanel] Found', found.length, 'airspaces in polygon')
+    console.log('[SidePanel] Found', found.length, 'airspaces along route')
     found.forEach((a, i) => {
       console.log(`  [${i}] ${a.type} (${a.id}): floor=${a.altitude?.floor}, ceiling=${a.altitude?.ceiling}`)
     })
     
     return found
-  }, [activePolygon, allAirspaceData])
+  }, [routeCorridor, allAirspaceData])
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -809,7 +820,80 @@ export default function SidePanel({
 
                 {activeTab === 'aircolumn' && (
                   <div>
-                    {clickedPoint ? (
+                    {route && route.length > 0 ? (
+                      <>
+                        <div style={{ marginBottom: '16px', fontSize: '14px', color: '#6b7280' }}>
+                          <div><strong>Route:</strong> {route.length} waypoints</div>
+                          <div><strong>Corridor Width:</strong> {routeRadius} km</div>
+                        </div>
+
+                        {/* Airspace List */}
+                        {airspacesAlongRoute.length > 0 ? (
+                          <div style={{ marginBottom: '16px' }}>
+                            <h3 style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '12px', color: '#111827' }}>
+                              Airspaces Along Route ({airspacesAlongRoute.length})
+                            </h3>
+                            <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '6px' }}>
+                              {airspacesAlongRoute.map((airspace, idx) => (
+                                <div
+                                  key={airspace.id || idx}
+                                  onClick={() => onAirspaceSelect?.(airspace.id)}
+                                  style={{
+                                    padding: '12px',
+                                    borderBottom: idx < airspacesAlongRoute.length - 1 ? '1px solid #e5e7eb' : 'none',
+                                    cursor: 'pointer',
+                                    backgroundColor: selectedAirspaceId === airspace.id ? '#eff6ff' : 'white',
+                                    transition: 'background-color 0.2s'
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    if (selectedAirspaceId !== airspace.id) {
+                                      e.currentTarget.style.backgroundColor = '#f9fafb'
+                                    }
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    if (selectedAirspaceId !== airspace.id) {
+                                      e.currentTarget.style.backgroundColor = 'white'
+                                    }
+                                  }}
+                                >
+                                  <div style={{ fontWeight: 'bold', color: '#111827', marginBottom: '4px' }}>
+                                    {airspace.type} - {airspace.id}
+                                  </div>
+                                  {airspace.name && (
+                                    <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>
+                                      {airspace.name}
+                                    </div>
+                                  )}
+                                  <div style={{ fontSize: '12px', color: '#374151' }}>
+                                    {airspace.altitude?.floor !== undefined && (
+                                      <span>Floor: {Math.round(airspace.altitude.floor / 3.28084)}m </span>
+                                    )}
+                                    {airspace.altitude?.ceiling !== undefined && (
+                                      <span>Ceiling: {Math.round(airspace.altitude.ceiling / 3.28084)}m</span>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ padding: '20px', textAlign: 'center', color: '#6b7280', marginBottom: '16px' }}>
+                            No airspaces found along this route
+                          </div>
+                        )}
+
+                        {/* Route 3D Visualization */}
+                        <AirspaceRoute
+                          route={route}
+                          routeCorridor={routeCorridor}
+                          routeRadius={routeRadius}
+                          hasAirspace={airspacesAlongRoute.length > 0}
+                          airspacesAlongRoute={airspacesAlongRoute}
+                          isExpanded={is3DExpanded}
+                          onToggleExpand={() => setIs3DExpanded(!is3DExpanded)}
+                        />
+                      </>
+                    ) : clickedPoint ? (
                       <>
                         <div style={{ marginBottom: '16px', fontSize: '14px', color: '#6b7280' }}>
                           <div><strong>Location:</strong> {clickedPoint.lat.toFixed(6)}, {clickedPoint.lon.toFixed(6)}</div>
@@ -1139,31 +1223,6 @@ export default function SidePanel({
                           onElevationCellsChange={onElevationCellsChange}
                           hasAirspace={airspacesAtPoint.length > 0}
                           airspacesAtPoint={airspacesAtPoint}
-                          isExpanded={is3DExpanded}
-                          onToggleExpand={() => setIs3DExpanded(!is3DExpanded)}
-                        />
-                      </>
-                    ) : activePolygon && activePolygon.length >= 3 ? (
-                      <>
-                        <div style={{ 
-                          padding: '16px', 
-                          backgroundColor: '#fef2f2', 
-                          borderRadius: '8px', 
-                          marginBottom: '16px',
-                          border: '1px solid #fecaca'
-                        }}>
-                          <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#991b1b', marginBottom: '4px' }}>
-                            Custom Polygon
-                          </div>
-                          <div style={{ fontSize: '12px', color: '#b91c1c' }}>
-                            {activePolygon.length} vertices
-                          </div>
-                        </div>
-                        
-                        {/* 3D Polygon Visualization */}
-                        <AirspacePolygon 
-                          vertices={activePolygon}
-                          airspacesInPolygon={airspacesInPolygon}
                           isExpanded={is3DExpanded}
                           onToggleExpand={() => setIs3DExpanded(!is3DExpanded)}
                         />

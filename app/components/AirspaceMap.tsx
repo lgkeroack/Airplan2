@@ -1,6 +1,6 @@
 'use client'
 
-import { MapContainer, TileLayer, Circle, Polygon, Popup, useMap, useMapEvents } from 'react-leaflet'
+import { MapContainer, TileLayer, Circle, Polygon, Polyline, Popup, useMap, useMapEvents } from 'react-leaflet'
 import L, { LatLngExpression, Map as LeafletMap } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
@@ -18,50 +18,176 @@ interface Layer {
   opacity: number
 }
 
-// Check if two line segments intersect (for self-intersection detection)
-function segmentsIntersect(
-  p1: { lat: number; lon: number },
-  p2: { lat: number; lon: number },
-  p3: { lat: number; lon: number },
-  p4: { lat: number; lon: number }
-): boolean {
-  const ccw = (A: { lat: number; lon: number }, B: { lat: number; lon: number }, C: { lat: number; lon: number }) => {
-    return (C.lon - A.lon) * (B.lat - A.lat) > (B.lon - A.lon) * (C.lat - A.lat)
+// Generate a corridor polygon from a route path
+function generateRouteCorridor(
+  route: Array<{ lat: number; lon: number }>,
+  radiusKm: number
+): Array<{ lat: number; lon: number }> {
+  if (route.length < 2) return []
+  
+  const vertices: Array<{ lat: number; lon: number }> = []
+  const kmPerDegLat = 111
+  const radiusDeg = radiusKm / 111
+  
+  // Helper to calculate perpendicular offset
+  const getPerpendicularOffset = (
+    p1: { lat: number; lon: number },
+    p2: { lat: number; lon: number },
+    distanceKm: number,
+    side: 'left' | 'right'
+  ): { lat: number; lon: number } => {
+    const dx = p2.lon - p1.lon
+    const dy = p2.lat - p1.lat
+    const length = Math.sqrt(dx * dx + dy * dy)
+    
+    if (length === 0) return { lat: p1.lat, lon: p1.lon }
+    
+    // Normalize
+    const nx = dx / length
+    const ny = dy / length
+    
+    // Perpendicular vector (rotate 90 degrees)
+    const perpX = -ny
+    const perpY = nx
+    
+    // Apply side
+    const sign = side === 'left' ? 1 : -1
+    const offsetDeg = (distanceKm / 111) * sign
+    
+    return {
+      lat: p1.lat + perpY * offsetDeg,
+      lon: p1.lon + perpX * offsetDeg / Math.cos(p1.lat * Math.PI / 180)
+    }
   }
-  return ccw(p1, p3, p4) !== ccw(p2, p3, p4) && ccw(p1, p2, p3) !== ccw(p1, p2, p4)
+  
+  // Generate circle points around a center
+  const generateCircle = (center: { lat: number; lon: number }, radiusKm: number, segments: number = 16): Array<{ lat: number; lon: number }> => {
+    const points: Array<{ lat: number; lon: number }> = []
+    const radiusDegLat = radiusKm / 111
+    const radiusDegLon = radiusKm / (111 * Math.cos(center.lat * Math.PI / 180))
+    
+    for (let i = 0; i < segments; i++) {
+      const angle = (i / segments) * Math.PI * 2
+      points.push({
+        lat: center.lat + Math.cos(angle) * radiusDegLat,
+        lon: center.lon + Math.sin(angle) * radiusDegLon
+      })
+    }
+    return points
+  }
+  
+  // Start circle
+  const startCircle = generateCircle(route[0], radiusKm)
+  vertices.push(...startCircle)
+  
+  // Corridor segments
+  for (let i = 0; i < route.length - 1; i++) {
+    const p1 = route[i]
+    const p2 = route[i + 1]
+    
+    // Get perpendicular offsets for this segment
+    const left1 = getPerpendicularOffset(p1, p2, radiusKm, 'left')
+    const right1 = getPerpendicularOffset(p1, p2, radiusKm, 'right')
+    
+    // For the last segment, also get offsets for p2
+    if (i === route.length - 2) {
+      const left2 = getPerpendicularOffset(p1, p2, radiusKm, 'left')
+      const right2 = getPerpendicularOffset(p1, p2, radiusKm, 'right')
+      
+      // Add rectangle for this segment
+      vertices.push(left2)
+      vertices.push(right2)
+    } else {
+      // Get next segment for smooth connection
+      const p3 = route[i + 2]
+      const nextLeft = getPerpendicularOffset(p2, p3, radiusKm, 'left')
+      const nextRight = getPerpendicularOffset(p2, p3, radiusKm, 'right')
+      
+      // Average the offsets at p2 for smooth transition
+      const avgLeft = {
+        lat: (left1.lat + nextLeft.lat) / 2,
+        lon: (left1.lon + nextLeft.lon) / 2
+      }
+      const avgRight = {
+        lat: (right1.lat + nextRight.lat) / 2,
+        lon: (right1.lon + nextRight.lon) / 2
+      }
+      
+      vertices.push(avgLeft)
+      vertices.push(avgRight)
+    }
+  }
+  
+  // End circle (reverse order to close the polygon)
+  const endCircle = generateCircle(route[route.length - 1], radiusKm).reverse()
+  vertices.push(...endCircle)
+  
+  // Close the polygon
+  if (vertices.length > 0) {
+    vertices.push(vertices[0])
+  }
+  
+  return vertices
 }
 
-// Check if a polygon has self-intersections
-function hasSelfintersection(vertices: Array<{ lat: number; lon: number }>): boolean {
-  if (vertices.length < 4) return false
+// Parse GPX file
+async function parseGPX(file: File): Promise<Array<{ lat: number; lon: number }>> {
+  const text = await file.text()
+  const parser = new DOMParser()
+  const xml = parser.parseFromString(text, 'text/xml')
   
-  for (let i = 0; i < vertices.length; i++) {
-    const p1 = vertices[i]
-    const p2 = vertices[(i + 1) % vertices.length]
-    
-    for (let j = i + 2; j < vertices.length; j++) {
-      // Skip adjacent segments
-      if (j === vertices.length - 1 && i === 0) continue
-      
-      const p3 = vertices[j]
-      const p4 = vertices[(j + 1) % vertices.length]
-      
-      if (segmentsIntersect(p1, p2, p3, p4)) {
-        return true
+  const waypoints: Array<{ lat: number; lon: number }> = []
+  
+  // Try to find track points first (more common in route files)
+  const trackPoints = xml.querySelectorAll('trkpt, wpt, rtept')
+  
+  trackPoints.forEach(point => {
+    const lat = parseFloat(point.getAttribute('lat') || '0')
+    const lon = parseFloat(point.getAttribute('lon') || '0')
+    if (!isNaN(lat) && !isNaN(lon)) {
+      waypoints.push({ lat, lon })
+    }
+  })
+  
+  return waypoints
+}
+
+// Parse IGC file
+async function parseIGC(file: File): Promise<Array<{ lat: number; lon: number }>> {
+  const text = await file.text()
+  const lines = text.split('\n')
+  const waypoints: Array<{ lat: number; lon: number }> = []
+  
+  for (const line of lines) {
+    // IGC B records contain position data
+    if (line.startsWith('B')) {
+      // Format: BHHMMSSDDMMmmmNDDDMMmmmEAAAALLL
+      // Extract latitude: DDMMmmmN/S
+      // Extract longitude: DDDMMmmmE/W
+      try {
+        const latStr = line.substring(7, 15) // DDMMmmm
+        const latDir = line.substring(15, 16) // N or S
+        const lonStr = line.substring(16, 25) // DDDMMmmm
+        const lonDir = line.substring(25, 26) // E or W
+        
+        const latDeg = parseInt(latStr.substring(0, 2))
+        const latMin = parseInt(latStr.substring(2, 4)) + parseInt(latStr.substring(4, 7)) / 1000
+        const lat = (latDeg + latMin / 60) * (latDir === 'N' ? 1 : -1)
+        
+        const lonDeg = parseInt(lonStr.substring(0, 3))
+        const lonMin = parseInt(lonStr.substring(3, 5)) + parseInt(lonStr.substring(5, 8)) / 1000
+        const lon = (lonDeg + lonMin / 60) * (lonDir === 'E' ? 1 : -1)
+        
+        if (!isNaN(lat) && !isNaN(lon)) {
+          waypoints.push({ lat, lon })
+        }
+      } catch (e) {
+        // Skip invalid lines
       }
     }
   }
-  return false
-}
-
-// Calculate centroid of a polygon
-function getPolygonCentroid(vertices: Array<{ lat: number; lon: number }>): { lat: number; lon: number } {
-  let lat = 0, lon = 0
-  for (const v of vertices) {
-    lat += v.lat
-    lon += v.lon
-  }
-  return { lat: lat / vertices.length, lon: lon / vertices.length }
+  
+  return waypoints
 }
 
 function MapInitializer({ center, zoom }: { center: LatLngExpression; zoom: number }) {
@@ -74,140 +200,6 @@ function MapInitializer({ center, zoom }: { center: LatLngExpression; zoom: numb
   return null
 }
 
-// Separate component for completed polygon popup (needs map context)
-function CompletedPolygonPopup({
-  position,
-  vertexCount,
-  onRetrieveAirspace,
-  onCancel
-}: {
-  position: LatLngExpression,
-  vertexCount: number,
-  onRetrieveAirspace: () => void,
-  onCancel: () => void
-}) {
-  const map = useMap()
-  
-  useEffect(() => {
-    // Ensure popup is properly initialized
-    return () => {
-      // Cleanup if needed
-    }
-  }, [map])
-  
-  return (
-    <Popup
-      position={position}
-      autoPan={false}
-      closeOnClick={false}
-      key={`polygon-popup-${position[0]}-${position[1]}`}
-    >
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '12px',
-          padding: '8px',
-          minWidth: '220px',
-          fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif",
-        }}>
-          <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>
-            Custom Polygon
-          </div>
-          <div style={{ fontSize: '12px', color: '#6b7280' }}>
-            {vertexCount} vertices
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <button
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                onRetrieveAirspace()
-              }}
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                backgroundColor: '#3b82f6',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                cursor: 'pointer',
-                textTransform: 'uppercase',
-                letterSpacing: '0.02em',
-                transition: 'background-color 0.2s'
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#2563eb'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#3b82f6'}
-            >
-              Retrieve airspace
-            </button>
-            <button
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                onCancel()
-              }}
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                backgroundColor: '#f3f4f6',
-                color: '#374151',
-                border: '1px solid #d1d5db',
-                borderRadius: '6px',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                cursor: 'pointer',
-                textTransform: 'uppercase',
-                letterSpacing: '0.02em',
-                transition: 'background-color 0.2s'
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#e5e7eb'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      </Popup>
-  )
-}
-
-// Separate component for completed polygon overlay
-const CompletedPolygonOverlay = React.memo(function CompletedPolygonOverlay({
-  positions,
-  popupPosition,
-  vertexCount,
-  onRetrieveAirspace,
-  onCancel
-}: {
-  positions: LatLngExpression[],
-  popupPosition: LatLngExpression,
-  vertexCount: number,
-  onRetrieveAirspace: () => void,
-  onCancel: () => void
-}) {
-  return (
-    <>
-      <Polygon
-        positions={positions}
-        pathOptions={{
-          color: '#ef4444',
-          fillColor: '#ef4444',
-          fillOpacity: 0.3,
-          weight: 3,
-        }}
-      />
-      <CompletedPolygonPopup
-        position={popupPosition}
-        vertexCount={vertexCount}
-        onRetrieveAirspace={onRetrieveAirspace}
-        onCancel={onCancel}
-      />
-    </>
-  )
-})
-
 // Separate component for map events to prevent re-renders of the event listeners
 function MapClickHandler({
   onMapClick,
@@ -215,16 +207,14 @@ function MapClickHandler({
   boundsUpdateTimerRef,
   mapRef,
   onMouseMove,
-  onMouseOut,
-  onDoubleClick
+  onMouseOut
 }: {
   onMapClick: (lat: number, lon: number) => void,
   setMapBounds: (bounds: { north: number; south: number; east: number; west: number }) => void,
   boundsUpdateTimerRef: React.MutableRefObject<NodeJS.Timeout | null>,
   mapRef: React.MutableRefObject<LeafletMap | null>,
   onMouseMove?: (lat: number, lon: number) => void,
-  onMouseOut?: () => void,
-  onDoubleClick?: () => void
+  onMouseOut?: () => void
 }) {
   const map = useMap()
 
@@ -248,10 +238,6 @@ function MapClickHandler({
   useMapEvents({
     click: (e) => {
       onMapClick(e.latlng.lat, e.latlng.lng)
-    },
-    dblclick: (e) => {
-      e.originalEvent.preventDefault()
-      onDoubleClick?.()
     },
     mousemove: (e) => {
       onMouseMove?.(e.latlng.lat, e.latlng.lng)
@@ -375,7 +361,7 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
   const [isElevationLoading, setIsElevationLoading] = useState(false)
   const lastClickRef = useRef<{ lat: number; lon: number; time: number } | null>(null)
 
-  // Initialize fetchRadius from localStorage, default to 1km
+  // Initialize fetchRadius from localStorage, default to 5km
   const [fetchRadius, setFetchRadius] = useState<number>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('airspace-fetch-radius')
@@ -386,7 +372,7 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         }
       }
     }
-    return 1
+    return 5
   })
   
   // Persist fetchRadius to localStorage when it changes
@@ -400,12 +386,19 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
   const [cursorPosition, setCursorPosition] = useState<{ lat: number; lon: number } | null>(null)
   const [elevationRange, setElevationRange] = useState<{ min: number; max: number }>({ min: 0, max: 100 })
   
-  // Polygon drawing state
-  const [isDrawingPolygon, setIsDrawingPolygon] = useState(false)
-  const [polygonVertices, setPolygonVertices] = useState<Array<{ lat: number; lon: number }>>([])
-  const [completedPolygon, setCompletedPolygon] = useState<Array<{ lat: number; lon: number }> | null>(null)
-  const [polygonError, setPolygonError] = useState<string | null>(null)
-  const [draggingVertexIndex, setDraggingVertexIndex] = useState<number | null>(null)
+  // Route drawing state
+  const [isDrawingRoute, setIsDrawingRoute] = useState(false)
+  const [routeVertices, setRouteVertices] = useState<Array<{ lat: number; lon: number }>>([])
+  const [routeRadius, setRouteRadius] = useState<number>(fetchRadius) // km, default to fetchRadius
+  const [completedRoute, setCompletedRoute] = useState<Array<{ lat: number; lon: number }> | null>(null)
+  const [routeCorridor, setRouteCorridor] = useState<Array<{ lat: number; lon: number }> | null>(null)
+  
+  // Update routeRadius when fetchRadius changes (if route not started)
+  useEffect(() => {
+    if (!isDrawingRoute && routeVertices.length === 0) {
+      setRouteRadius(fetchRadius)
+    }
+  }, [fetchRadius, isDrawingRoute, routeVertices.length])
 
   // Basemap options - all free tile providers without API keys
   const basemapOptions = [
@@ -678,13 +671,119 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     })
   }
 
+  // Route drawing functions
+  const startRouteDrawing = useCallback(() => {
+    setIsDrawingRoute(true)
+    setRouteVertices([])
+    setCompletedRoute(null)
+    setRouteCorridor(null)
+    setClickedPoint(null) // Close popup
+  }, [])
+  
+  const addRouteVertex = useCallback((lat: number, lon: number) => {
+    setRouteVertices(prev => [...prev, { lat, lon }])
+  }, [])
+  
+  const undoRouteVertex = useCallback(() => {
+    setRouteVertices(prev => {
+      if (prev.length <= 1) return prev
+      return prev.slice(0, -1)
+    })
+  }, [])
+  
+  const splitRouteSegment = useCallback((segmentIndex: number, lat: number, lon: number) => {
+    setRouteVertices(prev => {
+      if (segmentIndex < 0 || segmentIndex >= prev.length - 1) return prev
+      const newVertices = [...prev]
+      newVertices.splice(segmentIndex + 1, 0, { lat, lon })
+      return newVertices
+    })
+  }, [])
+  
+  const finishRouteDrawing = useCallback(() => {
+    if (routeVertices.length < 2) {
+      alert('Route needs at least 2 points')
+      return
+    }
+    setCompletedRoute(routeVertices)
+    setIsDrawingRoute(false)
+    setRouteVertices([])
+    
+    // Generate corridor polygon
+    const corridor = generateRouteCorridor(routeVertices, routeRadius)
+    setRouteCorridor(corridor)
+    
+    // Open side panel to show route analysis
+    setIsPanelOpen(true)
+  }, [routeVertices, routeRadius])
+  
+  const cancelRouteDrawing = useCallback(() => {
+    setIsDrawingRoute(false)
+    setRouteVertices([])
+    setCompletedRoute(null)
+    setRouteCorridor(null)
+  }, [])
+  
+  // Import route from GPX or IGC file
+  const importRoute = useCallback(async (file: File) => {
+    try {
+      let waypoints: Array<{ lat: number; lon: number }> = []
+      
+      if (file.name.toLowerCase().endsWith('.gpx')) {
+        waypoints = await parseGPX(file)
+      } else if (file.name.toLowerCase().endsWith('.igc')) {
+        waypoints = await parseIGC(file)
+      } else {
+        alert('Unsupported file format. Please use GPX or IGC files.')
+        return
+      }
+      
+      if (waypoints.length < 2) {
+        alert('Route file must contain at least 2 waypoints')
+        return
+      }
+      
+      setCompletedRoute(waypoints)
+      setIsDrawingRoute(false)
+      
+      // Generate corridor
+      const corridor = generateRouteCorridor(waypoints, routeRadius)
+      setRouteCorridor(corridor)
+      
+      // Fit map to route
+      if (mapRef.current && waypoints.length > 0) {
+        const bounds = waypoints.map(w => [w.lat, w.lon] as [number, number])
+        mapRef.current.fitBounds(bounds, {
+          padding: [50, 50],
+          maxZoom: 14,
+          animate: true
+        })
+      }
+      
+      // Open side panel
+      setIsPanelOpen(true)
+    } catch (error) {
+      console.error('Error importing route:', error)
+      alert('Failed to import route file: ' + (error instanceof Error ? error.message : 'Unknown error'))
+    }
+  }, [routeRadius])
+  
+  // Handle route file import
+  const handleRouteFileImport = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      importRoute(file)
+      // Reset input
+      e.target.value = ''
+    }
+  }, [importRoute])
+
   const handleMapClick = useCallback((lat: number, lon: number) => {
     // Normalize coordinates to 6 decimal places to prevent tiny epsilon changes
     const nLat = Number(lat.toFixed(6))
     const nLon = Number(lon.toFixed(6))
 
     // Click guard: Prevent double-processing of the same event 
-    // (e.g., when both a polygon and the map trigger a click)
     const now = Date.now()
     if (lastClickRef.current &&
       now - lastClickRef.current.time < 150 &&
@@ -694,10 +793,58 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     }
     lastClickRef.current = { lat: nLat, lon: nLon, time: now }
 
-    // If in polygon drawing mode, add vertex instead of normal click behavior
-    if (isDrawingPolygon) {
-      setPolygonVertices(prev => [...prev, { lat: nLat, lon: nLon }])
-      setPolygonError(null)
+    // If in route drawing mode, check if clicking on a segment to split it
+    if (isDrawingRoute) {
+      // Check if click is near an existing segment (for splitting)
+      let clickedSegment = -1
+      const clickThreshold = 0.001 // degrees, roughly 100m
+      
+      for (let i = 0; i < routeVertices.length - 1; i++) {
+        const p1 = routeVertices[i]
+        const p2 = routeVertices[i + 1]
+        
+        // Calculate distance from click point to line segment
+        const A = nLon - p1.lon
+        const B = nLat - p1.lat
+        const C = p2.lon - p1.lon
+        const D = p2.lat - p1.lat
+        
+        const dot = A * C + B * D
+        const lenSq = C * C + D * D
+        let param = -1
+        
+        if (lenSq !== 0) param = dot / lenSq
+        
+        let xx, yy
+        
+        if (param < 0) {
+          xx = p1.lon
+          yy = p1.lat
+        } else if (param > 1) {
+          xx = p2.lon
+          yy = p2.lat
+        } else {
+          xx = p1.lon + param * C
+          yy = p1.lat + param * D
+        }
+        
+        const dx = nLon - xx
+        const dy = nLat - yy
+        const distance = Math.sqrt(dx * dx + dy * dy)
+        
+        if (distance < clickThreshold && param >= 0 && param <= 1) {
+          clickedSegment = i
+          break
+        }
+      }
+      
+      if (clickedSegment >= 0) {
+        // Split the segment
+        splitRouteSegment(clickedSegment, nLat, nLon)
+      } else {
+        // Add new vertex
+        addRouteVertex(nLat, nLon)
+      }
       return
     }
 
@@ -727,108 +874,7 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
       })
       .catch(err => console.error('Elevation fetch error:', err))
       .finally(() => setIsElevationLoading(false))
-  }, [isDrawingPolygon])
-  
-  // Start polygon drawing mode
-  const startPolygonDrawing = useCallback(() => {
-    if (clickedPoint) {
-      setIsDrawingPolygon(true)
-      setPolygonVertices([{ lat: clickedPoint.lat, lon: clickedPoint.lon }])
-      setCompletedPolygon(null)
-      setPolygonError(null)
-      setClickedPoint(null)  // Close the popup
-    }
-  }, [clickedPoint])
-  
-  // Undo last vertex
-  const undoLastVertex = useCallback(() => {
-    setPolygonVertices(prev => {
-      if (prev.length <= 1) return prev
-      return prev.slice(0, -1)
-    })
-    setPolygonError(null)
-  }, [])
-  
-  // Close the polygon (double-click or button)
-  const closePolygon = useCallback(() => {
-    if (polygonVertices.length < 3) {
-      setPolygonError('A polygon needs at least 3 vertices')
-      return
-    }
-    
-    // Check for self-intersection
-    if (hasSelfintersection(polygonVertices)) {
-      setPolygonError('Polygon edges cross over each other. Please redraw.')
-      setPolygonVertices([])
-      setIsDrawingPolygon(false)
-      return
-    }
-    
-    // Complete the polygon
-    setCompletedPolygon(polygonVertices)
-    setIsDrawingPolygon(false)
-    setPolygonVertices([])
-    
-    // Fit map to show the polygon
-    if (mapRef.current && polygonVertices.length > 0) {
-      const bounds = polygonVertices.map(v => [v.lat, v.lon] as [number, number])
-      mapRef.current.fitBounds(bounds, {
-        padding: [50, 50],
-        maxZoom: 14,
-        animate: true
-      })
-    }
-  }, [polygonVertices])
-  
-  // Cancel polygon drawing
-  const cancelPolygonDrawing = useCallback(() => {
-    setIsDrawingPolygon(false)
-    setPolygonVertices([])
-    setPolygonError(null)
-  }, [])
-  
-  // Handle double-click to close polygon
-  const handlePolygonDoubleClick = useCallback(() => {
-    if (isDrawingPolygon && polygonVertices.length >= 3) {
-      closePolygon()
-    }
-  }, [isDrawingPolygon, polygonVertices.length, closePolygon])
-  
-  // Close completed polygon popup
-  const closeCompletedPolygon = useCallback(() => {
-    setCompletedPolygon(null)
-  }, [])
-  
-  // Retrieve airspace for the completed polygon
-  const retrieveAirspaceForPolygon = useCallback(() => {
-    if (!completedPolygon || completedPolygon.length < 3) return
-    
-    console.log('[AirspaceMap] Retrieve airspace for polygon:', completedPolygon)
-    
-    // Open the side panel to show the 3D polygon view
-    setIsPanelOpen(true)
-    
-    // Clear the point-based clicked point so we show polygon instead
-    setClickedPoint(null)
-  }, [completedPolygon])
-  
-  // Memoize the completed polygon centroid to prevent flickering
-  const completedPolygonCentroid = useMemo(() => {
-    if (!completedPolygon || completedPolygon.length < 3) return null
-    return getPolygonCentroid(completedPolygon)
-  }, [completedPolygon])
-  
-  // Memoize the completed polygon positions for Leaflet
-  const completedPolygonPositions = useMemo(() => {
-    if (!completedPolygon || completedPolygon.length < 3) return null
-    return completedPolygon.map(v => [v.lat, v.lon] as LatLngExpression)
-  }, [completedPolygon])
-  
-  // Memoize popup position as LatLngExpression
-  const completedPolygonPopupPosition = useMemo((): LatLngExpression | null => {
-    if (!completedPolygonCentroid) return null
-    return [completedPolygonCentroid.lat, completedPolygonCentroid.lon]
-  }, [completedPolygonCentroid])
+  }, [isDrawingRoute, addRouteVertex])
 
   // Handle airspace selection from side panel
   const handleAirspaceSelect = useCallback((ids: string | string[]) => {
@@ -1052,7 +1098,6 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
           mapRef={mapRef}
           onMouseMove={(lat, lon) => setCursorPosition({ lat, lon })}
           onMouseOut={() => setCursorPosition(null)}
-          onDoubleClick={handlePolygonDoubleClick}
         />
 
         {/* Basemap Layer - selected from dropdown */}
@@ -1194,7 +1239,7 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         {layers.find(l => l.id === 'airspace')?.visible && airspaceLayer}
 
         {/* Preview circle following cursor */}
-        {cursorPosition && !clickedPoint && !isDrawingPolygon && (
+        {cursorPosition && !clickedPoint && (
           <Circle
             center={[cursorPosition.lat, cursorPosition.lon]}
             radius={fetchRadius * 1000}  // Convert km to meters
@@ -1209,7 +1254,7 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         )}
 
         {/* Circle showing cylinder base radius */}
-        {clickedPoint && !isDrawingPolygon && (
+        {clickedPoint && !isDrawingRoute && (
           <Circle
             center={[clickedPoint.lat, clickedPoint.lon]}
             radius={fetchRadius * 1000}  // Convert km to meters
@@ -1223,63 +1268,56 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
           />
         )}
 
-        {/* Polygon being drawn */}
-        {isDrawingPolygon && polygonVertices.length > 0 && (
-          <>
-            {/* Draw the polygon outline */}
-            {polygonVertices.length >= 2 && (
-              <Polygon
-                positions={polygonVertices.map(v => [v.lat, v.lon] as LatLngExpression)}
-                pathOptions={{
-                  color: '#ef4444',
-                  fillColor: '#ef4444',
-                  fillOpacity: 0.2,
-                  weight: 3,
-                }}
-              />
-            )}
-            {/* Draw vertex markers */}
-            {polygonVertices.map((vertex, idx) => (
-              <Circle
-                key={idx}
-                center={[vertex.lat, vertex.lon]}
-                radius={50}
-                pathOptions={{
-                  color: idx === 0 ? '#22c55e' : '#ef4444',
-                  fillColor: idx === 0 ? '#22c55e' : '#ffffff',
-                  fillOpacity: 1,
-                  weight: 2,
-                }}
-              />
-            ))}
-            {/* Draw line to cursor position */}
-            {cursorPosition && polygonVertices.length >= 1 && (
-              <Polygon
-                positions={[
-                  [polygonVertices[polygonVertices.length - 1].lat, polygonVertices[polygonVertices.length - 1].lon],
-                  [cursorPosition.lat, cursorPosition.lon]
-                ] as LatLngExpression[]}
-                pathOptions={{
-                  color: '#ef4444',
-                  fillOpacity: 0,
-                  weight: 2,
-                  dashArray: '5, 5',
-                }}
-              />
-            )}
-          </>
-        )}
-
-        {/* Completed polygon with popup */}
-        {completedPolygonPositions && completedPolygonPopupPosition && (
-          <CompletedPolygonOverlay
-            positions={completedPolygonPositions}
-            popupPosition={completedPolygonPopupPosition}
-            vertexCount={completedPolygon?.length || 0}
-            onRetrieveAirspace={retrieveAirspaceForPolygon}
-            onCancel={closeCompletedPolygon}
+        {/* Route drawing - active route line */}
+        {(isDrawingRoute && routeVertices.length > 1) && (
+          <Polyline
+            positions={routeVertices.map(v => [v.lat, v.lon] as LatLngExpression)}
+            pathOptions={{
+              color: '#22c55e',
+              weight: 3,
+            }}
           />
         )}
+
+        {/* Route drawing - vertex markers */}
+        {isDrawingRoute && routeVertices.map((vertex, idx) => (
+          <Circle
+            key={idx}
+            center={[vertex.lat, vertex.lon]}
+            radius={8}
+            pathOptions={{
+              color: idx === 0 ? '#16a34a' : '#22c55e',
+              fillColor: idx === 0 ? '#16a34a' : '#22c55e',
+              fillOpacity: 0.8,
+              weight: 2,
+            }}
+          />
+        ))}
+
+        {/* Completed route corridor */}
+        {routeCorridor && routeCorridor.length > 0 && (
+          <Polygon
+            positions={routeCorridor.map(v => [v.lat, v.lon] as LatLngExpression)}
+            pathOptions={{
+              color: '#3b82f6',
+              fillColor: '#3b82f6',
+              fillOpacity: 0.2,
+              weight: 2,
+            }}
+          />
+        )}
+
+        {/* Completed route line */}
+        {completedRoute && completedRoute.length > 1 && (
+          <Polyline
+            positions={completedRoute.map(v => [v.lat, v.lon] as LatLngExpression)}
+            pathOptions={{
+              color: '#1e40af',
+              weight: 3,
+            }}
+          />
+        )}
+
 
         {/* Single Global Popup for performance - Hide if SidePanel is open */}
         {clickedPoint && !selectedAirspaceId && popupPosition && (
@@ -1346,34 +1384,15 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
                     Retrieve airspace here
                   </button>
                   <button
-                    disabled={true}
-                    style={{
-                      width: '100%',
-                      padding: '8px 10px',
-                      backgroundColor: '#f3f4f6',
-                      color: '#9ca3af',
-                      border: '2px solid #e5e7eb',
-                      borderRadius: '6px',
-                      fontSize: '12px',
-                      fontWeight: 'bold',
-                      cursor: 'not-allowed',
-                      transition: 'all 0.2s',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.02em'
-                    }}
-                  >
-                    Start drawing route (Coming Soon)
-                  </button>
-                  <button
                     onClick={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
-                      startPolygonDrawing()
+                      startRouteDrawing()
                     }}
                     style={{
                       width: '100%',
                       padding: '8px 10px',
-                      backgroundColor: '#ef4444',
+                      backgroundColor: '#22c55e',
                       color: 'white',
                       border: 'none',
                       borderRadius: '6px',
@@ -1384,143 +1403,188 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
                       textTransform: 'uppercase',
                       letterSpacing: '0.02em'
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
-                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#ef4444'}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#16a34a'}
+                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#22c55e'}
                   >
-                    Define polygon
+                    Start drawing route
                   </button>
                 </div>
               </div>
             )}
           </Popup>
         )}
-      </MapContainer>
-      
-      {/* Polygon Drawing Toolbar */}
-      {isDrawingPolygon && (
-        <div style={{
-          position: 'absolute',
-          top: '20px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 1000,
-          backgroundColor: 'white',
-          borderRadius: '8px',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-          padding: '12px 16px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '8px',
-          fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif",
-        }}>
-          <div style={{ 
-            fontSize: '14px', 
-            fontWeight: 'bold', 
-            color: '#111827',
-            textAlign: 'center',
-            borderBottom: '1px solid #e5e7eb',
-            paddingBottom: '8px'
-          }}>
-            Drawing Polygon ({polygonVertices.length} vertices)
-          </div>
-          <div style={{ fontSize: '12px', color: '#6b7280', textAlign: 'center' }}>
-            Click to add vertices • Double-click to close
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
+
+        {/* Route Drawing Toolbar */}
+        {isDrawingRoute && (
+          <div
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+            }}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+            }}
+            style={{
+              position: 'absolute',
+              top: '10px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 1000,
+              backgroundColor: 'white',
+              padding: '12px 16px',
+              borderRadius: '8px',
+              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+              display: 'flex',
+              gap: '8px',
+              alignItems: 'center',
+              fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif"
+            }}
+          >
+            <div style={{ marginRight: '8px', fontWeight: 'bold', color: '#374151' }}>
+              Route Drawing Mode
+            </div>
             <button
-              onClick={undoLastVertex}
-              disabled={polygonVertices.length <= 1}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                undoRouteVertex()
+              }}
+              onMouseDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              disabled={routeVertices.length === 0}
               style={{
-                flex: 1,
-                padding: '8px 12px',
-                backgroundColor: polygonVertices.length <= 1 ? '#e5e7eb' : '#f59e0b',
-                color: polygonVertices.length <= 1 ? '#9ca3af' : 'white',
+                padding: '6px 12px',
+                backgroundColor: routeVertices.length > 0 ? '#ef4444' : '#d1d5db',
+                color: 'white',
                 border: 'none',
                 borderRadius: '6px',
                 fontSize: '12px',
                 fontWeight: 'bold',
-                cursor: polygonVertices.length <= 1 ? 'not-allowed' : 'pointer',
-                textTransform: 'uppercase',
+                cursor: routeVertices.length > 0 ? 'pointer' : 'not-allowed',
+                transition: 'background-color 0.2s'
               }}
             >
               Undo
             </button>
-            <button
-              onClick={closePolygon}
-              disabled={polygonVertices.length < 3}
-              style={{
-                flex: 1,
-                padding: '8px 12px',
-                backgroundColor: polygonVertices.length < 3 ? '#e5e7eb' : '#22c55e',
-                color: polygonVertices.length < 3 ? '#9ca3af' : 'white',
-                border: 'none',
-                borderRadius: '6px',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                cursor: polygonVertices.length < 3 ? 'not-allowed' : 'pointer',
-                textTransform: 'uppercase',
+            <label
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
               }}
-            >
-              Close
-            </button>
-            <button
-              onClick={cancelPolygonDrawing}
+              onMouseDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
               style={{
-                flex: 1,
-                padding: '8px 12px',
-                backgroundColor: '#ef4444',
+                padding: '6px 12px',
+                backgroundColor: '#3b82f6',
                 color: 'white',
                 border: 'none',
                 borderRadius: '6px',
                 fontSize: '12px',
                 fontWeight: 'bold',
                 cursor: 'pointer',
-                textTransform: 'uppercase',
+                transition: 'background-color 0.2s',
+                display: 'inline-block'
+              }}
+            >
+              Import GPX/IGC
+              <input
+                type="file"
+                accept=".gpx,.igc"
+                onChange={handleRouteFileImport}
+                onClick={(e) => {
+                  e.stopPropagation()
+                }}
+                style={{ display: 'none' }}
+              />
+            </label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '8px' }}>
+              <label style={{ fontSize: '12px', color: '#374151', fontWeight: 'bold' }}>
+                Radius (km):
+              </label>
+              <input
+                type="number"
+                min="0.5"
+                max="25"
+                step="0.5"
+                value={routeRadius}
+                onChange={(e) => setRouteRadius(parseFloat(e.target.value) || fetchRadius)}
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                }}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                }}
+                style={{
+                  width: '60px',
+                  padding: '4px 8px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '4px',
+                  fontSize: '12px'
+                }}
+              />
+            </div>
+            <button
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                finishRouteDrawing()
+              }}
+              onMouseDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              disabled={routeVertices.length < 2}
+              style={{
+                padding: '6px 12px',
+                backgroundColor: routeVertices.length >= 2 ? '#22c55e' : '#d1d5db',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '12px',
+                fontWeight: 'bold',
+                cursor: routeVertices.length >= 2 ? 'pointer' : 'not-allowed',
+                transition: 'background-color 0.2s'
+              }}
+            >
+              Finish Route
+            </button>
+            <button
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                cancelRouteDrawing()
+              }}
+              onMouseDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              style={{
+                padding: '6px 12px',
+                backgroundColor: '#6b7280',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '12px',
+                fontWeight: 'bold',
+                cursor: 'pointer',
+                transition: 'background-color 0.2s'
               }}
             >
               Cancel
             </button>
+            <div style={{ marginLeft: '8px', fontSize: '12px', color: '#6b7280' }}>
+              {routeVertices.length} point{routeVertices.length !== 1 ? 's' : ''}
+            </div>
           </div>
-        </div>
-      )}
-      
-      {/* Polygon Error Message */}
-      {polygonError && (
-        <div style={{
-          position: 'absolute',
-          top: '20px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 1001,
-          backgroundColor: '#fef2f2',
-          border: '1px solid #fecaca',
-          borderRadius: '8px',
-          padding: '12px 16px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif",
-          boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-        }}>
-          <div style={{ color: '#dc2626', fontSize: '14px', fontWeight: '500' }}>
-            {polygonError}
-          </div>
-          <button
-            onClick={() => setPolygonError(null)}
-            style={{
-              backgroundColor: '#dc2626',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              padding: '4px 8px',
-              fontSize: '12px',
-              cursor: 'pointer',
-            }}
-          >
-            OK
-          </button>
-        </div>
-      )}
+        )}
+      </MapContainer>
       
       {/* Side Panel */}
       <SidePanel
@@ -1548,7 +1612,9 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
           setElevationCells(cells)
           setElevationRange({ min: minElev, max: maxElev })
         }}
-        activePolygon={completedPolygon}
+        route={completedRoute}
+        routeCorridor={routeCorridor}
+        routeRadius={routeRadius}
       />
 
     </div>
