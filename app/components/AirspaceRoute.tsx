@@ -15,7 +15,7 @@ export interface RouteElevationCellData {
 
 interface AirspaceRouteProps {
     route: Array<{ lat: number; lon: number }>
-    routeCorridor: Array<{ lat: number; lon: number }>
+    routeCorridor: Array<{ lat: number; lon: number }> | null | undefined
     routeRadius: number
     onElevationCellsChange?: (cells: RouteElevationCellData[], minElev: number, maxElev: number) => void
     hasAirspace?: boolean
@@ -233,7 +233,7 @@ function RouteAirspaceVolumes({
 }: {
     airspaces: AirspaceData[],
     route: Array<{ lat: number; lon: number }>,
-    routeCorridor: Array<{ lat: number; lon: number }>,
+    routeCorridor: Array<{ lat: number; lon: number }> | null | undefined,
     routeLength: number,
     routeRadius: number,
     minAlt?: number,
