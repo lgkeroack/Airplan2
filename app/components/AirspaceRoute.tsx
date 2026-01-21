@@ -354,6 +354,80 @@ function RouteAirspaceVolumes({
     )
 }
 
+// Distance markers along the route
+function RouteDistanceMarkers({
+    route,
+    routeLength,
+    routeRadius
+}: {
+    route: Array<{ lat: number; lon: number }>,
+    routeLength: number,
+    routeRadius: number
+}) {
+    const scaleX = 10 / routeLength
+    const scaleZ = 3 / (routeRadius * 2)
+    
+    const markers = useMemo(() => {
+        if (routeLength === 0) return []
+        
+        // Place markers every 1km, or every 5km if route is very long
+        const interval = routeLength > 50 ? 5 : 1
+        const markers: Array<{ distance: number; x: number }> = []
+        
+        for (let d = 0; d <= routeLength; d += interval) {
+            const x = d * scaleX - 5
+            markers.push({ distance: Math.round(d), x })
+        }
+        
+        // Always include the end marker
+        if (markers.length === 0 || markers[markers.length - 1].distance < routeLength) {
+            const x = routeLength * scaleX - 5
+            markers.push({ distance: Math.round(routeLength), x })
+        }
+        
+        return markers
+    }, [routeLength, scaleX])
+    
+    return (
+        <group>
+            {markers.map((marker, idx) => (
+                <group key={idx} position={[marker.x, 0, 0]}>
+                    {/* Vertical line through the route */}
+                    <Line 
+                        points={[
+                            [0, -2, -scaleZ * routeRadius],
+                            [0, 2, -scaleZ * routeRadius]
+                        ]} 
+                        color="#3b82f6" 
+                        lineWidth={2} 
+                    />
+                    {/* Label */}
+                    <Html 
+                        position={[0, 2.2, -scaleZ * routeRadius]} 
+                        style={{ pointerEvents: 'none' }} 
+                        transform={false}
+                        center
+                    >
+                        <div style={{
+                            fontSize: '12px',
+                            fontWeight: 'bold',
+                            color: '#3b82f6',
+                            backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            border: '1px solid #3b82f6',
+                            textShadow: '0 0 2px white',
+                            whiteSpace: 'nowrap'
+                        }}>
+                            {marker.distance} km
+                        </div>
+                    </Html>
+                </group>
+            ))}
+        </group>
+    )
+}
+
 // Central altitude scale
 function RouteCentralAltitudeScale({ 
     minAlt = 0, 
@@ -604,6 +678,13 @@ export default function AirspaceRoute({
                     cells={elevationCells}
                     minElev={minElev}
                     maxElev={maxElev}
+                    routeLength={routeLength}
+                    routeRadius={routeRadius}
+                />
+                
+                {/* Distance markers */}
+                <RouteDistanceMarkers
+                    route={route}
                     routeLength={routeLength}
                     routeRadius={routeRadius}
                 />

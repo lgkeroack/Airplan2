@@ -1,4 +1,27 @@
-// ... existing code up to line 20 ...
+'use client'
+
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Circle, Polyline, Polygon } from 'react-leaflet'
+import { DivIcon } from 'leaflet'
+import { LatLngExpression } from 'leaflet'
+import 'leaflet/dist/leaflet.css'
+import SidePanel from './SidePanel'
+import type { AirspaceData } from '@/lib/types'
+import L from 'leaflet'
+
+// Fix for default marker icon in Next.js
+if (typeof window !== 'undefined') {
+  delete (L.Icon.Default.prototype as any)._getIconUrl
+  L.Icon.Default.mergeOptions({
+    iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+    iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+  })
+}
+
+interface AirspaceMapProps {
+  initialData?: AirspaceData[]
+}
 
 // Generate a corridor polygon from a route path
 // Creates a "meandering slot" shape: semicircles at ends connected by a corridor
@@ -153,4 +176,424 @@ function generateRouteCorridor(
   return vertices
 }
 
-// ... rest of existing code ...
+function MapClickHandler({ onMapClick }: { onMapClick: (lat: number, lon: number) => void }) {
+  useMapEvents({
+    click: (e) => {
+      onMapClick(e.latlng.lat, e.latlng.lng)
+    },
+  })
+  return null
+}
+
+// Get point at a specific distance along the route
+function getRoutePointAtDistance(
+  route: Array<{ lat: number; lon: number }>,
+  distanceKm: number
+): { lat: number; lon: number } | null {
+  if (route.length < 2) return null
+  
+  // Calculate distance between two points in km
+  const distanceKmBetween = (p1: { lat: number; lon: number }, p2: { lat: number; lon: number }): number => {
+    const dx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
+    const dy = (p2.lat - p1.lat) * 111
+    return Math.sqrt(dx * dx + dy * dy)
+  }
+  
+  let accumulatedDist = 0
+  
+  for (let i = 0; i < route.length - 1; i++) {
+    const p1 = route[i]
+    const p2 = route[i + 1]
+    const segLen = distanceKmBetween(p1, p2)
+    
+    if (accumulatedDist + segLen >= distanceKm) {
+      // Point is on this segment
+      const t = (distanceKm - accumulatedDist) / segLen
+      return {
+        lat: p1.lat + t * (p2.lat - p1.lat),
+        lon: p1.lon + t * (p2.lon - p1.lon)
+      }
+    }
+    
+    accumulatedDist += segLen
+  }
+  
+  // Return last point if distance exceeds route length
+  return route[route.length - 1]
+}
+
+// Calculate total route length
+function calculateRouteLength(route: Array<{ lat: number; lon: number }>): number {
+  if (route.length < 2) return 0
+  
+  const distanceKm = (p1: { lat: number; lon: number }, p2: { lat: number; lon: number }): number => {
+    const dx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
+    const dy = (p2.lat - p1.lat) * 111
+    return Math.sqrt(dx * dx + dy * dy)
+  }
+  
+  let total = 0
+  for (let i = 0; i < route.length - 1; i++) {
+    total += distanceKm(route[i], route[i + 1])
+  }
+  return total
+}
+
+export default function AirspaceMap({ initialData = [] }: AirspaceMapProps) {
+  const [clickedPoint, setClickedPoint] = useState<{ lat: number; lon: number } | null>(null)
+  const [fetchRadius, setFetchRadius] = useState(5)
+  const [isDrawingRoute, setIsDrawingRoute] = useState(false)
+  const [routeVertices, setRouteVertices] = useState<Array<{ lat: number; lon: number }>>([])
+  const [routeRadius, setRouteRadius] = useState(5)
+  const [completedRoute, setCompletedRoute] = useState<Array<{ lat: number; lon: number }> | null>(null)
+  const [routeCorridor, setRouteCorridor] = useState<Array<{ lat: number; lon: number }> | null>(null)
+  const [isRouteLoading, setIsRouteLoading] = useState(false)
+  const [isSidePanelOpen, setIsSidePanelOpen] = useState(true)
+
+  // Sync routeRadius with fetchRadius when not drawing
+  useEffect(() => {
+    if (!isDrawingRoute) {
+      setRouteRadius(fetchRadius)
+    }
+  }, [fetchRadius, isDrawingRoute])
+
+  const handleMapClick = useCallback((lat: number, lon: number) => {
+    if (isRouteLoading) return
+    
+    if (isDrawingRoute) {
+      setRouteVertices(prev => [...prev, { lat, lon }])
+    } else {
+      setClickedPoint({ lat, lon })
+      setCompletedRoute(null)
+      setRouteCorridor(null)
+    }
+  }, [isDrawingRoute, isRouteLoading])
+
+  const startRouteDrawing = useCallback(() => {
+    setIsDrawingRoute(true)
+    setRouteVertices([])
+    setClickedPoint(null)
+    setCompletedRoute(null)
+    setRouteCorridor(null)
+  }, [])
+
+  const addRouteVertex = useCallback((lat: number, lon: number) => {
+    if (isRouteLoading) return
+    setRouteVertices(prev => [...prev, { lat, lon }])
+  }, [isRouteLoading])
+
+  const undoRouteVertex = useCallback(() => {
+    if (isRouteLoading) return
+    setRouteVertices(prev => prev.slice(0, -1))
+  }, [isRouteLoading])
+
+  const splitRouteSegment = useCallback((lat: number, lon: number, segmentIndex: number) => {
+    if (isRouteLoading) return
+    setRouteVertices(prev => {
+      const newVertices = [...prev]
+      newVertices.splice(segmentIndex + 1, 0, { lat, lon })
+      return newVertices
+    })
+  }, [isRouteLoading])
+
+  const finishRouteDrawing = useCallback(async () => {
+    if (routeVertices.length < 2 || isRouteLoading) return
+    
+    setIsRouteLoading(true)
+    try {
+      const corridor = generateRouteCorridor(routeVertices, routeRadius)
+      setCompletedRoute([...routeVertices])
+      setRouteCorridor(corridor)
+      setIsDrawingRoute(false)
+    } catch (error) {
+      console.error('Error finishing route:', error)
+    } finally {
+      setIsRouteLoading(false)
+    }
+  }, [routeVertices, routeRadius, isRouteLoading])
+
+  const cancelRouteDrawing = useCallback(() => {
+    setIsDrawingRoute(false)
+    setRouteVertices([])
+    setCompletedRoute(null)
+    setRouteCorridor(null)
+  }, [])
+
+  const importRoute = useCallback(async (file: File) => {
+    if (isRouteLoading) return
+    
+    setIsRouteLoading(true)
+    try {
+      const text = await file.text()
+      const vertices: Array<{ lat: number; lon: number }> = []
+      
+      if (file.name.endsWith('.gpx')) {
+        const parser = new DOMParser()
+        const xml = parser.parseFromString(text, 'text/xml')
+        const trkpts = xml.querySelectorAll('trkpt, wpt, rtept')
+        trkpts.forEach(pt => {
+          const lat = parseFloat(pt.getAttribute('lat') || '0')
+          const lon = parseFloat(pt.getAttribute('lon') || '0')
+          if (lat && lon) vertices.push({ lat, lon })
+        })
+      } else if (file.name.endsWith('.igc')) {
+        const lines = text.split('\n')
+        lines.forEach(line => {
+          if (line.startsWith('B')) {
+            const latStr = line.substring(7, 15)
+            const lonStr = line.substring(15, 24)
+            const lat = parseFloat(latStr.substring(0, 2)) + parseFloat(latStr.substring(2)) / 60
+            const lon = parseFloat(lonStr.substring(0, 3)) + parseFloat(lonStr.substring(3)) / 60
+            if (lat && lon) vertices.push({ lat, lon })
+          }
+        })
+      }
+      
+      if (vertices.length >= 2) {
+        setRouteVertices(vertices)
+        const corridor = generateRouteCorridor(vertices, routeRadius)
+        setCompletedRoute(vertices)
+        setRouteCorridor(corridor)
+        setIsDrawingRoute(false)
+      }
+    } catch (error) {
+      console.error('Error importing route:', error)
+    } finally {
+      setIsRouteLoading(false)
+    }
+  }, [routeRadius, isRouteLoading])
+
+  const handleRouteFileImport = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      importRoute(file)
+    }
+  }, [importRoute])
+
+  const routePolyline = useMemo(() => {
+    if (routeVertices.length < 2) return null
+    return routeVertices.map(v => [v.lat, v.lon] as LatLngExpression)
+  }, [routeVertices])
+
+  const routeCorridorPolygon = useMemo(() => {
+    if (!routeCorridor || routeCorridor.length < 3) return null
+    return routeCorridor.map(v => [v.lat, v.lon] as LatLngExpression)
+  }, [routeCorridor])
+
+  // Generate distance markers along the route
+  const routeDistanceMarkers = useMemo(() => {
+    if (!completedRoute || completedRoute.length < 2) return []
+    
+    const routeLength = calculateRouteLength(completedRoute)
+    if (routeLength === 0) return []
+    
+    // Place markers every 1km, or every 5km if route is very long
+    const interval = routeLength > 50 ? 5 : 1
+    const markers: Array<{ distance: number; lat: number; lon: number }> = []
+    
+    for (let d = 0; d <= routeLength; d += interval) {
+      const point = getRoutePointAtDistance(completedRoute, d)
+      if (point) {
+        markers.push({ distance: Math.round(d), ...point })
+      }
+    }
+    
+    // Always include the end marker
+    if (markers.length === 0 || markers[markers.length - 1].distance < routeLength) {
+      const endPoint = completedRoute[completedRoute.length - 1]
+      markers.push({ distance: Math.round(routeLength), lat: endPoint.lat, lon: endPoint.lon })
+    }
+    
+    return markers
+  }, [completedRoute])
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
+      <MapContainer
+        center={[37.7749, -122.4194]}
+        zoom={10}
+        style={{ height: '100%', width: '100%' }}
+      >
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+        
+        <MapClickHandler onMapClick={handleMapClick} />
+        
+        {clickedPoint && (
+          <Marker position={[clickedPoint.lat, clickedPoint.lon]}>
+            <Popup>
+              <div>
+                <button onClick={startRouteDrawing}>Start Drawing Route</button>
+              </div>
+            </Popup>
+          </Marker>
+        )}
+        
+        {isDrawingRoute && routePolyline && (
+          <Polyline positions={routePolyline} color="blue" />
+        )}
+        
+        {isDrawingRoute && routeVertices.map((v, i) => (
+          <Circle key={i} center={[v.lat, v.lon]} radius={50} color="blue" />
+        ))}
+        
+        {routeCorridorPolygon && (
+          <Polygon positions={routeCorridorPolygon} color="green" fillOpacity={0.2} />
+        )}
+        
+        {/* Distance markers along the route */}
+        {routeDistanceMarkers.map((marker, idx) => {
+          const icon = new DivIcon({
+            className: 'distance-marker',
+            html: `<div style="
+              background-color: #3b82f6;
+              color: white;
+              border: 2px solid white;
+              border-radius: 50%;
+              width: 32px;
+              height: 32px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              font-weight: bold;
+              font-size: 11px;
+              box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            ">${marker.distance}</div>`,
+            iconSize: [32, 32],
+            iconAnchor: [16, 16]
+          })
+          
+          return (
+            <Marker
+              key={idx}
+              position={[marker.lat, marker.lon]}
+              icon={icon}
+            >
+              <Popup>
+                <div style={{ textAlign: 'center', fontWeight: 'bold', color: '#3b82f6', fontSize: '14px' }}>
+                  {marker.distance} km
+                </div>
+              </Popup>
+            </Marker>
+          )
+        })}
+      </MapContainer>
+
+      {isDrawingRoute && (
+        <div
+                    style={{
+            position: 'absolute',
+            top: '10px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            backgroundColor: 'white',
+            padding: '12px',
+            borderRadius: '8px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            zIndex: 1000,
+            display: 'flex',
+            gap: '8px',
+            alignItems: 'center'
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button onClick={undoRouteVertex} disabled={routeVertices.length === 0 || isRouteLoading}>
+            Undo
+          </button>
+          <label>
+            <input
+              type="file"
+              accept=".gpx,.igc"
+              onChange={handleRouteFileImport}
+              style={{ display: 'none' }}
+            />
+            <button onClick={() => document.querySelector('input[type="file"]')?.click()} disabled={isRouteLoading}>
+              Import
+                  </button>
+          </label>
+          <input
+            type="number"
+            value={routeRadius}
+            onChange={(e) => setRouteRadius(parseFloat(e.target.value) || fetchRadius)}
+            min="0.5"
+            max="25"
+            step="0.5"
+                    style={{
+              width: '80px',
+              padding: '4px 8px',
+              fontSize: '14px',
+              textAlign: 'center',
+              border: '1px solid #ccc',
+              borderRadius: '4px'
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          />
+          <span>km</span>
+          <button onClick={finishRouteDrawing} disabled={routeVertices.length < 2 || isRouteLoading}>
+            Finish
+          </button>
+          <button onClick={cancelRouteDrawing} disabled={isRouteLoading}>
+            Cancel
+                  </button>
+                </div>
+      )}
+
+      {isRouteLoading && (
+        <>
+          <style>{`
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}</style>
+          <div
+            style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              backgroundColor: 'rgba(0,0,0,0.7)',
+              color: 'white',
+              padding: '20px',
+              borderRadius: '8px',
+              zIndex: 2000,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '12px'
+            }}
+          >
+            <div className="spinner" style={{
+              border: '4px solid #f3f3f3',
+              borderTop: '4px solid #3498db',
+              borderRadius: '50%',
+              width: '40px',
+              height: '40px',
+              animation: 'spin 1s linear infinite'
+            }} />
+            <div>Processing route...</div>
+              </div>
+        </>
+            )}
+
+      <SidePanel
+        isOpen={isSidePanelOpen}
+        onToggle={() => setIsSidePanelOpen(!isSidePanelOpen)}
+        layers={[]}
+        onLayerToggle={() => {}}
+        onLayerOpacityChange={() => {}}
+        clickedPoint={clickedPoint}
+        allAirspaceData={[{ id: 'default', name: 'Default', data: initialData }]}
+        fetchRadius={fetchRadius}
+        onFetchRadiusChange={setFetchRadius}
+        route={completedRoute}
+        routeCorridor={routeCorridor}
+        routeRadius={routeRadius}
+      />
+    </div>
+  )
+}
