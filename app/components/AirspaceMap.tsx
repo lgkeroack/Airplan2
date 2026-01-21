@@ -250,6 +250,34 @@ export default function AirspaceMap({ initialData = [] }: AirspaceMapProps) {
   const [isRouteLoading, setIsRouteLoading] = useState(false)
   const [isSidePanelOpen, setIsSidePanelOpen] = useState(true)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  
+  // Layers and basemap state
+  const [layers, setLayers] = useState<Array<{ id: string; name: string; visible: boolean; opacity: number }>>([
+    { id: 'airspace', name: 'Airspace', visible: true, opacity: 0.7 }
+  ])
+  const [selectedBasemap, setSelectedBasemap] = useState('topographic')
+  
+  const basemapOptions = [
+    { id: 'topographic', name: 'Topographic' },
+    { id: 'satellite', name: 'Satellite' },
+    { id: 'street', name: 'Street Map' }
+  ]
+  
+  const handleLayerToggle = useCallback((layerId: string) => {
+    setLayers(prev => prev.map(layer => 
+      layer.id === layerId ? { ...layer, visible: !layer.visible } : layer
+    ))
+  }, [])
+  
+  const handleLayerOpacityChange = useCallback((layerId: string, opacity: number) => {
+    setLayers(prev => prev.map(layer => 
+      layer.id === layerId ? { ...layer, opacity } : layer
+    ))
+  }, [])
+  
+  const handleBasemapChange = useCallback((basemapId: string) => {
+    setSelectedBasemap(basemapId)
+  }, [])
 
   // Sync routeRadius with fetchRadius when not drawing
   useEffect(() => {
@@ -411,14 +439,31 @@ export default function AirspaceMap({ initialData = [] }: AirspaceMapProps) {
   return (
     <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
       <MapContainer
-        center={[37.7749, -122.4194]}
-        zoom={10}
+        center={[56.0, -106.0]}
+        zoom={5}
         style={{ height: '100%', width: '100%' }}
       >
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
+        {selectedBasemap === 'topographic' && (
+          <TileLayer
+            attribution='Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)'
+            url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
+            maxZoom={17}
+          />
+        )}
+        {selectedBasemap === 'satellite' && (
+          <TileLayer
+            attribution='&copy; <a href="https://www.esri.com/">Esri</a> &copy; <a href="https://www.esri.com/">Esri</a>'
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            maxZoom={19}
+          />
+        )}
+        {selectedBasemap === 'street' && (
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            maxZoom={19}
+          />
+        )}
         
         <MapClickHandler onMapClick={handleMapClick} />
         
@@ -479,6 +524,96 @@ export default function AirspaceMap({ initialData = [] }: AirspaceMapProps) {
               </Popup>
             </Marker>
           )
+        })}
+        
+        {/* Render airspace polygons and circles */}
+        {layers.find(l => l.id === 'airspace')?.visible && initialData.map((airspace, idx) => {
+          const opacity = layers.find(l => l.id === 'airspace')?.opacity || 0.7
+          
+          // Get airspace color based on type
+          const getAirspaceColor = (type: string): string => {
+            const colors: Record<string, string> = {
+              'Class A': '#ff0000',
+              'Class B': '#ff00ff',
+              'Class C': '#ffff00',
+              'Class D': '#00ffff',
+              'Class E': '#00ff00',
+              'Class F': '#0000ff',
+              'Class G': '#808080',
+              'Restricted': '#ff8800',
+              'Prohibited': '#ff0000',
+              'Danger': '#ff4444',
+              'Warning': '#ffaa00',
+              'MOA': '#00ff88',
+              'Alert': '#ffaa00',
+            }
+            return colors[type] || '#64748b'
+          }
+          
+          const color = getAirspaceColor(airspace.type)
+          
+          // Render circle-based airspace
+          if (airspace.coordinates && airspace.radius !== undefined) {
+            const radiusMeters = airspace.radius * 1852 // Convert NM to meters
+            return (
+              <Circle
+                key={airspace.id || idx}
+                center={[airspace.coordinates.latitude, airspace.coordinates.longitude]}
+                radius={radiusMeters}
+                pathOptions={{
+                  color: color,
+                  fillColor: color,
+                  fillOpacity: opacity,
+                  weight: 2
+                }}
+              >
+                <Popup>
+                  <div>
+                    <strong>{airspace.type}</strong>
+                    {airspace.location && <div>{airspace.location}</div>}
+                    {airspace.altitude?.floor !== undefined && (
+                      <div>Floor: {Math.round(airspace.altitude.floor / 3.28084)}m</div>
+                    )}
+                    {airspace.altitude?.ceiling !== undefined && (
+                      <div>Ceiling: {Math.round(airspace.altitude.ceiling / 3.28084)}m</div>
+                    )}
+                  </div>
+                </Popup>
+              </Circle>
+            )
+          }
+          
+          // Render polygon-based airspace
+          if (airspace.polygon && airspace.polygon.length >= 3) {
+            const positions = airspace.polygon.map(p => [p.latitude, p.longitude] as LatLngExpression)
+            return (
+              <Polygon
+                key={airspace.id || idx}
+                positions={positions}
+                pathOptions={{
+                  color: color,
+                  fillColor: color,
+                  fillOpacity: opacity,
+                  weight: 2
+                }}
+              >
+                <Popup>
+                  <div>
+                    <strong>{airspace.type}</strong>
+                    {airspace.location && <div>{airspace.location}</div>}
+                    {airspace.altitude?.floor !== undefined && (
+                      <div>Floor: {Math.round(airspace.altitude.floor / 3.28084)}m</div>
+                    )}
+                    {airspace.altitude?.ceiling !== undefined && (
+                      <div>Ceiling: {Math.round(airspace.altitude.ceiling / 3.28084)}m</div>
+                    )}
+                  </div>
+                </Popup>
+              </Polygon>
+            )
+          }
+          
+          return null
         })}
       </MapContainer>
 
@@ -585,9 +720,12 @@ export default function AirspaceMap({ initialData = [] }: AirspaceMapProps) {
       <SidePanel
         isOpen={isSidePanelOpen}
         onToggle={() => setIsSidePanelOpen(!isSidePanelOpen)}
-        layers={[]}
-        onLayerToggle={() => {}}
-        onLayerOpacityChange={() => {}}
+        layers={layers}
+        onLayerToggle={handleLayerToggle}
+        onLayerOpacityChange={handleLayerOpacityChange}
+        basemapOptions={basemapOptions}
+        selectedBasemap={selectedBasemap}
+        onBasemapChange={handleBasemapChange}
         clickedPoint={clickedPoint}
         allAirspaceData={[{ id: 'default', name: 'Default', data: initialData }]}
         fetchRadius={fetchRadius}
