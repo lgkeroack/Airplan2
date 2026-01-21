@@ -242,9 +242,7 @@ export function polygonIntersectsAirspace(
   }
   
   return false
-}
-
-// Find all airspaces that intersect with a polygon
+}// Find all airspaces that intersect with a polygon
 export function findAirspacesInPolygon(
   polygon: Array<{ lat: number; lon: number }>,
   airspaces: AirspaceData[]

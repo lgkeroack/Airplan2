@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Circle, Polyline, Polygon } from 'react-leaflet'
 import { DivIcon } from 'leaflet'
 import { LatLngExpression } from 'leaflet'
@@ -249,6 +249,7 @@ export default function AirspaceMap({ initialData = [] }: AirspaceMapProps) {
   const [routeCorridor, setRouteCorridor] = useState<Array<{ lat: number; lon: number }> | null>(null)
   const [isRouteLoading, setIsRouteLoading] = useState(false)
   const [isSidePanelOpen, setIsSidePanelOpen] = useState(true)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Sync routeRadius with fetchRadius when not drawing
   useEffect(() => {
@@ -505,14 +506,15 @@ export default function AirspaceMap({ initialData = [] }: AirspaceMapProps) {
           </button>
           <label>
             <input
+              ref={fileInputRef}
               type="file"
               accept=".gpx,.igc"
               onChange={handleRouteFileImport}
               style={{ display: 'none' }}
             />
-            <button onClick={() => document.querySelector('input[type="file"]')?.click()} disabled={isRouteLoading}>
+            <button onClick={() => fileInputRef.current?.click()} disabled={isRouteLoading}>
               Import
-                  </button>
+            </button>
           </label>
           <input
             type="number"
