@@ -224,8 +224,8 @@ export function polygonIntersectsAirspace(
   
   // For circular airspaces, check if center is inside polygon or if circle overlaps
   if (airspace.coordinates && airspace.radius !== undefined) {
-    const center = { lat: airspace.coordinates.latitude, lon: airspace.coordinates.longitude }
-    if (pointInPolygon(center.lat, center.lon, polygon)) {
+    const center = { latitude: airspace.coordinates.latitude, longitude: airspace.coordinates.longitude }
+    if (pointInPolygon(center, polygonCoords)) {
       return true
     }
     
@@ -251,4 +251,3 @@ export function findAirspacesInPolygon(
 ): AirspaceData[] {
   return airspaces.filter(airspace => polygonIntersectsAirspace(polygon, airspace))
 }
-

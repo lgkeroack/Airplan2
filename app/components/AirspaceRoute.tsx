@@ -25,14 +25,14 @@ interface AirspaceRouteProps {
 }
 
 interface RouteElevationCell {
-    x: number  // 3D position along route
-    y: number  // 3D position across route (perpendicular)
+    distance: number  // Distance along route (0 to totalLength)
+    offset: number    // Perpendicular offset from route center (-radius to +radius)
     lat: number
     lon: number
     elevation: number | null
 }
 
-// Get color for elevation (terrain colormap) - same as cylinder
+// Get color for elevation (terrain colormap)
 function getElevationColor(elevation: number, minElev: number, maxElev: number): string {
     const range = maxElev - minElev || 1
     const t = Math.max(0, Math.min(1, (elevation - minElev) / range))
@@ -60,254 +60,147 @@ function getElevationColor(elevation: number, minElev: number, maxElev: number):
     }
 }
 
-// Convert lat/lon to 3D coordinates along route
-function latLonToRouteCoords(
-    lat: number,
-    lon: number,
+// Calculate distance between two points in km
+function distanceKm(p1: { lat: number; lon: number }, p2: { lat: number; lon: number }): number {
+    const dx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
+    const dy = (p2.lat - p1.lat) * 111
+    return Math.sqrt(dx * dx + dy * dy)
+}
+
+// Get point at distance along route and perpendicular offset
+function getRoutePoint(
     route: Array<{ lat: number; lon: number }>,
-    routeRadius: number
-): { x: number; y: number } | null {
-    // Find the closest point on the route
-    let minDist = Infinity
-    let closestSegment = 0
-    let closestT = 0
+    distance: number,
+    offset: number
+): { lat: number; lon: number } | null {
+    let accumulatedDist = 0
     
     for (let i = 0; i < route.length - 1; i++) {
         const p1 = route[i]
         const p2 = route[i + 1]
+        const segLen = distanceKm(p1, p2)
         
-        // Convert to km
-        const dx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
-        const dy = (p2.lat - p1.lat) * 111
-        const segLenSq = dx * dx + dy * dy
-        
-        if (segLenSq === 0) continue
-        
-        // Vector from p1 to point (in km)
-        const px = (lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
-        const py = (lat - p1.lat) * 111
-        
-        // Project point onto segment
-        const t = Math.max(0, Math.min(1, (px * dx + py * dy) / segLenSq))
-        
-        // Closest point on segment (in km from p1)
-        const projX = t * dx
-        const projY = t * dy
-        
-        // Distance from point to closest point on segment
-        const distX = px - projX
-        const distY = py - projY
-        const dist = Math.sqrt(distX * distX + distY * distY)
-        
-        if (dist < minDist) {
-            minDist = dist
-            closestSegment = i
-            closestT = t
+        if (accumulatedDist + segLen >= distance) {
+            // Point is on this segment
+            const t = (distance - accumulatedDist) / segLen
+            const lat = p1.lat + t * (p2.lat - p1.lat)
+            const lon = p1.lon + t * (p2.lon - p1.lon)
+            
+            // Calculate perpendicular offset
+            const dx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
+            const dy = (p2.lat - p1.lat) * 111
+            const len = Math.sqrt(dx * dx + dy * dy)
+            
+            if (len === 0) return { lat, lon }
+            
+            const perpX = -dy / len
+            const perpY = dx / len
+            
+            const offsetLat = (offset / 111) * perpY
+            const offsetLon = (offset / (111 * Math.cos(lat * Math.PI / 180))) * perpX
+            
+            return {
+                lat: lat + offsetLat,
+                lon: lon + offsetLon
+            }
         }
+        
+        accumulatedDist += segLen
     }
     
-    // If point is too far from route, return null
-    if (minDist > routeRadius * 1.5) return null
-    
-    // Calculate position along route (x = distance along route, y = perpendicular offset)
-    let routeDistance = 0
-    for (let i = 0; i < closestSegment; i++) {
-        const p1 = route[i]
-        const p2 = route[i + 1]
-        const dx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
-        const dy = (p2.lat - p1.lat) * 111
-        routeDistance += Math.sqrt(dx * dx + dy * dy)
-    }
-    
-    // Add distance along current segment
-    const p1 = route[closestSegment]
-    const p2 = route[closestSegment + 1]
-    const segDx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
-    const segDy = (p2.lat - p1.lat) * 111
-    const segLen = Math.sqrt(segDx * segDx + segDy * segDy)
-    routeDistance += closestT * segLen
-    
-    // Calculate perpendicular offset
-    if (segLen === 0) return null
-    
-    // Perpendicular vector (normalized)
-    const perpX = -segDy / segLen
-    const perpY = segDx / segLen
-    
-    // Vector from closest point to actual point (in km)
-    const closestLon = p1.lon + closestT * (p2.lon - p1.lon)
-    const closestLat = p1.lat + closestT * (p2.lat - p1.lat)
-    const pointDx = (lon - closestLon) * 111 * Math.cos(lat * Math.PI / 180)
-    const pointDy = (lat - closestLat) * 111
-    
-    // Project onto perpendicular
-    const offset = pointDx * perpX + pointDy * perpY
-    
-    // Normalize: route length maps to 3D x, radius maps to 3D y
-    const totalRouteLength = route.reduce((sum, p, i) => {
-        if (i === 0) return 0
-        const p1 = route[i - 1]
-        const dx = (p.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
-        const dy = (p.lat - p1.lat) * 111
-        return sum + Math.sqrt(dx * dx + dy * dy)
-    }, 0)
-    
-    const scaleX = totalRouteLength > 0 ? 10 / totalRouteLength : 1  // Scale to fit in ~10 units
-    const scaleY = routeRadius > 0 ? 3 / (routeRadius * 2) : 1  // Scale to fit in ~3 units
-    
-    return {
-        x: routeDistance * scaleX - 5,  // Center around 0
-        y: offset * scaleY
-    }
+    return null
 }
 
-// Render terrain along route
+// Render terrain along route (straightened view)
 function RouteTerrain({ 
     cells, 
     minElev, 
     maxElev, 
-    route,
+    routeLength,
     routeRadius
 }: { 
     cells: RouteElevationCell[], 
     minElev: number, 
     maxElev: number,
-    route: Array<{ lat: number; lon: number }>,
+    routeLength: number,
     routeRadius: number
 }) {
     const verticalExaggeration = 4.0
-    const subdivisions = 20  // For smooth terrain
+    const subdivisions = 30
     
     const terrainGeometry = useMemo(() => {
-        if (cells.length === 0) return null
+        if (cells.length === 0 || routeLength === 0) return null
         
         const geometry = new BufferGeometry()
         const vertices: number[] = []
         const colors: number[] = []
         
-        // Find max positive elevation for normalization
+        // Scale factors: route length → 3D x, route width → 3D z
+        const scaleX = 10 / routeLength  // Route fits in 10 units
+        const scaleZ = 3 / (routeRadius * 2)  // Width fits in 3 units
+        const maxHeight = 0.5
         const maxPositiveElev = Math.max(...cells.map(c => c.elevation ?? 0).filter(e => e > 0), 1)
-        const maxHeight = 0.5  // Max terrain height in 3D units
         
-        // Helper to get height at a point (with bilinear interpolation)
-        const getHeight = (x: number, y: number): number => {
-            if (cells.length === 0) return 0
+        // Helper to get elevation at a grid point
+        const getElev = (distance: number, offset: number): number => {
+            let minDist = Infinity
+            let closestElev = 0
             
-            // Find closest cells for interpolation
-            const cellSize = 0.5  // Approximate cell size in 3D units
-            const searchRadius = cellSize * 2
-            
-            const nearbyCells: Array<{ cell: RouteElevationCell; dist: number }> = []
             for (const cell of cells) {
-                const dx = x - cell.x
-                const dy = y - cell.y
-                const dist = Math.sqrt(dx * dx + dy * dy)
-                if (dist < searchRadius) {
-                    nearbyCells.push({ cell, dist })
+                const dist = Math.sqrt(
+                    Math.pow((cell.distance - distance) * scaleX, 2) +
+                    Math.pow((cell.offset - offset) * scaleZ, 2)
+                )
+                if (dist < minDist) {
+                    minDist = dist
+                    closestElev = cell.elevation ?? 0
                 }
             }
             
-            if (nearbyCells.length === 0) return 0
-            
-            // Use inverse distance weighting
-            nearbyCells.sort((a, b) => a.dist - b.dist)
-            const closest = nearbyCells[0]
-            if (closest.dist < 0.01) {
-                // Very close, use directly
-                const elev = closest.cell.elevation ?? 0
-                return elev > 0 ? (elev / maxPositiveElev) * maxHeight * verticalExaggeration : 0
-            }
-            
-            // Weighted average of nearby cells
-            let totalWeight = 0
-            let weightedSum = 0
-            for (const { cell, dist } of nearbyCells.slice(0, 4)) {  // Use 4 closest
-                const weight = 1 / (dist + 0.01)  // Avoid division by zero
-                const elev = cell.elevation ?? 0
-                weightedSum += elev * weight
-                totalWeight += weight
-            }
-            
-            const avgElev = totalWeight > 0 ? weightedSum / totalWeight : 0
-            return avgElev > 0 ? (avgElev / maxPositiveElev) * maxHeight * verticalExaggeration : 0
+            return closestElev
         }
-        
-        // Helper to get elevation at a point
-        const getElev = (x: number, y: number): number => {
-            if (cells.length === 0) return 0
-            
-            const cellSize = 0.5
-            const searchRadius = cellSize * 2
-            
-            const nearbyCells: Array<{ cell: RouteElevationCell; dist: number }> = []
-            for (const cell of cells) {
-                const dx = x - cell.x
-                const dy = y - cell.y
-                const dist = Math.sqrt(dx * dx + dy * dy)
-                if (dist < searchRadius) {
-                    nearbyCells.push({ cell, dist })
-                }
-            }
-            
-            if (nearbyCells.length === 0) return 0
-            
-            nearbyCells.sort((a, b) => a.dist - b.dist)
-            const closest = nearbyCells[0]
-            if (closest.dist < 0.01) {
-                return closest.cell.elevation ?? 0
-            }
-            
-            // Weighted average
-            let totalWeight = 0
-            let weightedSum = 0
-            for (const { cell, dist } of nearbyCells.slice(0, 4)) {
-                const weight = 1 / (dist + 0.01)
-                const elev = cell.elevation ?? 0
-                weightedSum += elev * weight
-                totalWeight += weight
-            }
-            
-            return totalWeight > 0 ? weightedSum / totalWeight : 0
-        }
-        
-        // Get bounds
-        const minX = Math.min(...cells.map(c => c.x))
-        const maxX = Math.max(...cells.map(c => c.x))
-        const minY = Math.min(...cells.map(c => c.y))
-        const maxY = Math.max(...cells.map(c => c.y))
-        
-        const stepX = (maxX - minX) / subdivisions
-        const stepY = (maxY - minY) / subdivisions
         
         // Create terrain mesh
-        for (let yi = 0; yi < subdivisions; yi++) {
+        const stepX = routeLength / subdivisions
+        const stepZ = (routeRadius * 2) / subdivisions
+        
+        for (let zi = 0; zi < subdivisions; zi++) {
             for (let xi = 0; xi < subdivisions; xi++) {
-                const x0 = minX + xi * stepX
-                const x1 = minX + (xi + 1) * stepX
-                const y0 = minY + yi * stepY
-                const y1 = minY + (yi + 1) * stepY
+                const d0 = xi * stepX
+                const d1 = (xi + 1) * stepX
+                const o0 = -routeRadius + zi * stepZ
+                const o1 = -routeRadius + (zi + 1) * stepZ
                 
-                // Get heights for the 4 corners
-                const h00 = getHeight(x0, y0)
-                const h10 = getHeight(x1, y0)
-                const h01 = getHeight(x0, y1)
-                const h11 = getHeight(x1, y1)
+                const h00 = getElev(d0, o0)
+                const h10 = getElev(d1, o0)
+                const h01 = getElev(d0, o1)
+                const h11 = getElev(d1, o1)
+                
+                const height00 = h00 > 0 ? (h00 / maxPositiveElev) * maxHeight * verticalExaggeration : 0
+                const height10 = h10 > 0 ? (h10 / maxPositiveElev) * maxHeight * verticalExaggeration : 0
+                const height01 = h01 > 0 ? (h01 / maxPositiveElev) * maxHeight * verticalExaggeration : 0
+                const height11 = h11 > 0 ? (h11 / maxPositiveElev) * maxHeight * verticalExaggeration : 0
+                
+                const x0 = d0 * scaleX - 5
+                const x1 = d1 * scaleX - 5
+                const z0 = o0 * scaleZ
+                const z1 = o1 * scaleZ
                 
                 // Triangle 1
-                vertices.push(x0, h00, y0)
-                vertices.push(x0, h01, y1)
-                vertices.push(x1, h10, y0)
+                vertices.push(x0, height00, z0)
+                vertices.push(x0, height01, z1)
+                vertices.push(x1, height10, z0)
                 
-                const elev1 = (getElev(x0, y0) + getElev(x0, y1) + getElev(x1, y0)) / 3
+                const elev1 = (h00 + h01 + h10) / 3
                 const color1 = new Color(getElevationColor(elev1, minElev, maxElev))
                 colors.push(color1.r, color1.g, color1.b, color1.r, color1.g, color1.b, color1.r, color1.g, color1.b)
                 
                 // Triangle 2
-                vertices.push(x1, h10, y0)
-                vertices.push(x0, h01, y1)
-                vertices.push(x1, h11, y1)
+                vertices.push(x1, height10, z0)
+                vertices.push(x0, height01, z1)
+                vertices.push(x1, height11, z1)
                 
-                const elev2 = (getElev(x1, y0) + getElev(x0, y1) + getElev(x1, y1)) / 3
+                const elev2 = (h10 + h01 + h11) / 3
                 const color2 = new Color(getElevationColor(elev2, minElev, maxElev))
                 colors.push(color2.r, color2.g, color2.b, color2.r, color2.g, color2.b, color2.r, color2.g, color2.b)
             }
@@ -317,7 +210,7 @@ function RouteTerrain({
         geometry.setAttribute('color', new BufferAttribute(new Float32Array(colors), 3))
         
         return geometry
-    }, [cells, minElev, maxElev, route, routeRadius])
+    }, [cells, minElev, maxElev, routeLength, routeRadius])
     
     if (!terrainGeometry) return null
     
@@ -333,6 +226,7 @@ function RouteAirspaceVolumes({
     airspaces,
     route,
     routeCorridor,
+    routeLength,
     routeRadius,
     minAlt = 0,
     maxAlt = 18000
@@ -340,35 +234,35 @@ function RouteAirspaceVolumes({
     airspaces: AirspaceData[],
     route: Array<{ lat: number; lon: number }>,
     routeCorridor: Array<{ lat: number; lon: number }>,
+    routeLength: number,
     routeRadius: number,
     minAlt?: number,
     maxAlt?: number
 }) {
     const airspaceGeometries = useMemo(() => {
-        if (!routeCorridor || routeCorridor.length < 3) return []
+        if (!routeCorridor || routeCorridor.length < 3 || routeLength === 0) return []
+        
+        const corridorPolygon = routeCorridor.map(v => ({
+            latitude: v.lat,
+            longitude: v.lon
+        }))
+        // Ensure closed
+        if (corridorPolygon.length > 0 && 
+            (corridorPolygon[0].latitude !== corridorPolygon[corridorPolygon.length - 1].latitude ||
+             corridorPolygon[0].longitude !== corridorPolygon[corridorPolygon.length - 1].longitude)) {
+            corridorPolygon.push(corridorPolygon[0])
+        }
+        
+        const scaleX = 10 / routeLength
+        const scaleZ = 3 / (routeRadius * 2)
         
         const geometries: Array<{
             id: string
             geometry: BufferGeometry
             color: string
-            floor: number
-            ceiling: number
         }> = []
         
-            // Convert routeCorridor to polygon format (ensure closed)
-            const corridorPolygon = routeCorridor.map(v => ({
-                latitude: v.lat,
-                longitude: v.lon
-            }))
-            // Ensure polygon is closed
-            if (corridorPolygon.length > 0 && 
-                (corridorPolygon[0].latitude !== corridorPolygon[corridorPolygon.length - 1].latitude ||
-                 corridorPolygon[0].longitude !== corridorPolygon[corridorPolygon.length - 1].longitude)) {
-                corridorPolygon.push(corridorPolygon[0])
-            }
-        
         for (const airspace of airspaces) {
-            // Check if airspace intersects corridor
             if (!airspace.polygon || airspace.polygon.length < 3) continue
             
             const airspacePolygon = airspace.polygon.map(p => ({
@@ -376,69 +270,50 @@ function RouteAirspaceVolumes({
                 longitude: p.longitude
             }))
             
-            // Simple intersection check: see if any airspace vertex is in corridor
-            let intersects = false
-            for (const vertex of airspacePolygon) {
-                if (pointInPolygon(vertex, corridorPolygon)) {
-                    intersects = true
-                    break
-                }
-            }
-            
-            if (!intersects) continue
-            
-            const floor = (airspace.altitude?.floor || 0) / 3.28084  // Convert feet to meters
+            const floor = (airspace.altitude?.floor || 0) / 3.28084
             const ceiling = (airspace.altitude?.ceiling || 18000) / 3.28084
             
-            // Create geometry for airspace along route
             const geometry = new BufferGeometry()
             const vertices: number[] = []
             
-            // Sample points along route and check if they're in airspace
-            const samplesPerSegment = 10
-            for (let i = 0; i < route.length - 1; i++) {
-                const p1 = route[i]
-                const p2 = route[i + 1]
+            // Sample along route
+            const samples = Math.ceil(routeLength / 0.5) // Every 500m
+            const step = routeLength / samples
+            
+            for (let i = 0; i < samples; i++) {
+                const distance = i * step
                 
-                for (let j = 0; j < samplesPerSegment; j++) {
-                    const t = j / samplesPerSegment
-                    const lat = p1.lat + t * (p2.lat - p1.lat)
-                    const lon = p1.lon + t * (p2.lon - p1.lon)
+                // Sample across width
+                const widthSamples = 10
+                for (let j = 0; j < widthSamples; j++) {
+                    const offset = -routeRadius + (j / (widthSamples - 1)) * (routeRadius * 2)
                     
-                    // Check if point is in airspace
-                    const inAirspace = pointInPolygon({ latitude: lat, longitude: lon }, airspacePolygon)
-                    if (!inAirspace) continue
+                    const point = getRoutePoint(route, distance, offset)
+                    if (!point) continue
                     
-                    // Convert to route coords
-                    const coords = latLonToRouteCoords(lat, lon, route, routeRadius)
-                    if (!coords) continue
+                    if (!pointInPolygon({ latitude: point.lat, longitude: point.lon }, airspacePolygon)) continue
+                    if (!pointInPolygon({ latitude: point.lat, longitude: point.lon }, corridorPolygon)) continue
                     
-                    // Create box for this sample point
-                    const boxSize = 0.2
+                    const x = distance * scaleX - 5
+                    const z = offset * scaleZ
                     const floorY = (floor - minAlt) / (maxAlt - minAlt) * 4 - 2
                     const ceilingY = (ceiling - minAlt) / (maxAlt - minAlt) * 4 - 2
+                    const boxSize = 0.15
                     
-                    // Bottom face
-                    vertices.push(coords.x - boxSize, floorY, coords.y - boxSize)
-                    vertices.push(coords.x + boxSize, floorY, coords.y - boxSize)
-                    vertices.push(coords.x + boxSize, floorY, coords.y + boxSize)
-                    vertices.push(coords.x - boxSize, floorY, coords.y - boxSize)
-                    vertices.push(coords.x + boxSize, floorY, coords.y + boxSize)
-                    vertices.push(coords.x - boxSize, floorY, coords.y + boxSize)
+                    // Create box
+                    vertices.push(x - boxSize, floorY, z - boxSize)
+                    vertices.push(x + boxSize, floorY, z - boxSize)
+                    vertices.push(x + boxSize, floorY, z + boxSize)
+                    vertices.push(x - boxSize, floorY, z - boxSize)
+                    vertices.push(x + boxSize, floorY, z + boxSize)
+                    vertices.push(x - boxSize, floorY, z + boxSize)
                     
-                    // Top face
-                    vertices.push(coords.x - boxSize, ceilingY, coords.y - boxSize)
-                    vertices.push(coords.x - boxSize, ceilingY, coords.y + boxSize)
-                    vertices.push(coords.x + boxSize, ceilingY, coords.y + boxSize)
-                    vertices.push(coords.x - boxSize, ceilingY, coords.y - boxSize)
-                    vertices.push(coords.x + boxSize, ceilingY, coords.y + boxSize)
-                    vertices.push(coords.x + boxSize, ceilingY, coords.y - boxSize)
-                    
-                    // Walls (simplified - just vertical edges)
-                    vertices.push(coords.x - boxSize, floorY, coords.y - boxSize)
-                    vertices.push(coords.x - boxSize, ceilingY, coords.y - boxSize)
-                    vertices.push(coords.x + boxSize, floorY, coords.y - boxSize)
-                    vertices.push(coords.x + boxSize, ceilingY, coords.y - boxSize)
+                    vertices.push(x - boxSize, ceilingY, z - boxSize)
+                    vertices.push(x - boxSize, ceilingY, z + boxSize)
+                    vertices.push(x + boxSize, ceilingY, z + boxSize)
+                    vertices.push(x - boxSize, ceilingY, z - boxSize)
+                    vertices.push(x + boxSize, ceilingY, z + boxSize)
+                    vertices.push(x + boxSize, ceilingY, z - boxSize)
                 }
             }
             
@@ -446,35 +321,21 @@ function RouteAirspaceVolumes({
             
             geometry.setAttribute('position', new BufferAttribute(new Float32Array(vertices), 3))
             
-            // Get color for airspace type
             const typeColors: Record<string, string> = {
-                'A': '#ff0000',
-                'B': '#ff6600',
-                'C': '#ffff00',
-                'D': '#00ff00',
-                'E': '#0000ff',
-                'F': '#6600ff',
-                'G': '#ffffff',
-                'R': '#ff00ff',
-                'P': '#00ffff',
-                'Q': '#ffcccc',
-                'T': '#ccffcc',
-                'W': '#ccccff'
+                'A': '#ff0000', 'B': '#ff6600', 'C': '#ffff00', 'D': '#00ff00',
+                'E': '#0000ff', 'F': '#6600ff', 'G': '#ffffff', 'R': '#ff00ff',
+                'P': '#00ffff', 'Q': '#ffcccc', 'T': '#ccffcc', 'W': '#ccccff'
             }
-            
-            const color = typeColors[airspace.type] || '#888888'
             
             geometries.push({
                 id: airspace.id,
                 geometry,
-                color,
-                floor,
-                ceiling
+                color: typeColors[airspace.type] || '#888888'
             })
         }
         
         return geometries
-    }, [airspaces, route, routeCorridor, routeRadius, minAlt, maxAlt])
+    }, [airspaces, route, routeCorridor, routeLength, routeRadius, minAlt, maxAlt])
     
     return (
         <group>
@@ -505,12 +366,10 @@ function RouteCentralAltitudeScale({
 }) {
     const routeBottom = -2
     const routeTop = 2
-    const routeHeight = routeTop - routeBottom
     
     const scaleLabels = useMemo(() => {
         const altitudes = new Set<number>()
         altitudes.add(0)
-        
         for (const airspace of airspaces) {
             if (airspace.altitude?.floor !== undefined) {
                 altitudes.add((airspace.altitude.floor / 3.28084))
@@ -519,50 +378,28 @@ function RouteCentralAltitudeScale({
                 altitudes.add((airspace.altitude.ceiling / 3.28084))
             }
         }
-        
         return Array.from(altitudes).sort((a, b) => a - b)
     }, [airspaces])
     
     const altToY = (altMeters: number): number => {
         const t = (altMeters - minAlt) / (maxAlt - minAlt)
-        return routeBottom + t * routeHeight
+        return routeBottom + t * (routeTop - routeBottom)
     }
-    
-    const linePoints: [number, number, number][] = [
-        [0, routeBottom, 0],
-        [0, routeTop, 0]
-    ]
-    
-    const tickWidth = 0.08
     
     return (
         <group>
-            <Line points={linePoints} color="#1e3a5f" lineWidth={3} />
-            
+            <Line points={[[0, routeBottom, 0], [0, routeTop, 0]]} color="#1e3a5f" lineWidth={3} />
             {scaleLabels.map((alt, idx) => {
                 const y = altToY(alt)
                 return (
                     <group key={idx} position={[0, y, 0]}>
-                        <Line
-                            points={[
-                                [-tickWidth * 1.5, 0, 0],
-                                [tickWidth * 1.5, 0, 0]
-                            ]}
-                            color="#1e3a5f"
-                            lineWidth={2}
-                        />
-                        <Html
-                            position={[-0.3, 0, 0]}
-                            style={{ pointerEvents: 'none', whiteSpace: 'nowrap' }}
-                            transform={false}
-                            sprite={false}
-                        >
+                        <Line points={[[-0.12, 0, 0], [0.12, 0, 0]]} color="#1e3a5f" lineWidth={2} />
+                        <Html position={[-0.3, 0, 0]} style={{ pointerEvents: 'none' }} transform={false}>
                             <div style={{
                                 fontSize: '14px',
                                 fontWeight: 'bold',
                                 color: '#111827',
-                                textShadow: '0 0 4px white, 0 0 4px white, 0 0 4px white, 0 0 4px white, 0 0 2px white',
-                                userSelect: 'none',
+                                textShadow: '0 0 4px white, 0 0 4px white, 0 0 4px white',
                                 textAlign: 'right'
                             }}>
                                 {Math.round(alt)}
@@ -571,23 +408,6 @@ function RouteCentralAltitudeScale({
                     </group>
                 )
             })}
-            
-            <Html
-                position={[-0.3, routeTop + 0.2, 0]}
-                style={{ pointerEvents: 'none', whiteSpace: 'nowrap' }}
-                transform={false}
-                sprite={false}
-            >
-                <div style={{
-                    fontSize: '12px',
-                    fontWeight: 'bold',
-                    color: '#374151',
-                    textShadow: '0 0 4px white, 0 0 4px white, 0 0 4px white',
-                    userSelect: 'none'
-                }}>
-                    m
-                </div>
-            </Html>
         </group>
     )
 }
@@ -608,13 +428,23 @@ export default function AirspaceRoute({
     const [minElev, setMinElev] = useState(0)
     const [maxElev, setMaxElev] = useState(100)
     
+    // Calculate total route length
+    const routeLength = useMemo(() => {
+        if (!route || route.length < 2) return 0
+        let total = 0
+        for (let i = 0; i < route.length - 1; i++) {
+            total += distanceKm(route[i], route[i + 1])
+        }
+        return total
+    }, [route])
+    
     useEffect(() => {
         setMounted(true)
     }, [])
     
-    // Fetch elevation data for route corridor
+    // Fetch elevation data
     useEffect(() => {
-        if (!route || route.length < 2 || !routeCorridor || routeCorridor.length < 3) {
+        if (!route || route.length < 2 || !routeCorridor || routeCorridor.length < 3 || routeLength === 0) {
             setElevationCells([])
             return
         }
@@ -622,80 +452,35 @@ export default function AirspaceRoute({
         const fetchElevationGrid = async () => {
             setIsLoading(true)
             
-            // Tile the corridor with 500m x 500m cells
             const cellSizeKm = 0.5
-            
-            // Calculate total route length
-            let totalLength = 0
-            for (let i = 0; i < route.length - 1; i++) {
-                const p1 = route[i]
-                const p2 = route[i + 1]
-                const dx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
-                const dy = (p2.lat - p1.lat) * 111
-                totalLength += Math.sqrt(dx * dx + dy * dy)
+            const corridorPolygon = routeCorridor.map(v => ({
+                latitude: v.lat,
+                longitude: v.lon
+            }))
+            if (corridorPolygon.length > 0 && 
+                (corridorPolygon[0].latitude !== corridorPolygon[corridorPolygon.length - 1].latitude ||
+                 corridorPolygon[0].longitude !== corridorPolygon[corridorPolygon.length - 1].longitude)) {
+                corridorPolygon.push(corridorPolygon[0])
             }
             
-            // Generate cells along route
-            const cellRequests: { x: number; y: number; lat: number; lon: number }[] = []
+            const cellRequests: { distance: number; offset: number; lat: number; lon: number }[] = []
             
-            // Sample points along route
-            const samplesPerKm = 2  // 2 samples per km = 500m spacing
-            const numSamples = Math.ceil(totalLength * samplesPerKm)
+            // Sample along route
+            const lengthSamples = Math.ceil(routeLength / cellSizeKm)
+            const widthSamples = Math.ceil((routeRadius * 2) / cellSizeKm)
             
-            for (let i = 0; i < route.length - 1; i++) {
-                const p1 = route[i]
-                const p2 = route[i + 1]
+            for (let i = 0; i < lengthSamples; i++) {
+                const distance = (i / lengthSamples) * routeLength
                 
-                    const segDx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
-                    const segDy = (p2.lat - p1.lat) * 111
-                    const segLen = Math.sqrt(segDx * segDx + segDy * segDy)
-                const segSamples = Math.ceil(segLen * samplesPerKm)
-                
-                for (let j = 0; j < segSamples; j++) {
-                    const t = j / segSamples
-                    const lat = p1.lat + t * (p2.lat - p1.lat)
-                    const lon = p1.lon + t * (p2.lon - p1.lon)
+                for (let j = 0; j < widthSamples; j++) {
+                    const offset = -routeRadius + (j / (widthSamples - 1)) * (routeRadius * 2)
                     
-                    // Sample points perpendicular to route
-                    const perpSamples = Math.ceil(routeRadius * 2 / cellSizeKm)
-                    for (let k = -perpSamples / 2; k <= perpSamples / 2; k++) {
-                        const offsetKm = k * cellSizeKm
-                        
-                        // Calculate perpendicular offset
-                        const segDxNorm = segDx / segLen
-                        const segDyNorm = segDy / segLen
-                        const perpX = -segDyNorm
-                        const perpY = segDxNorm
-                        
-                        const offsetLat = lat + (perpY * offsetKm) / 111
-                        const offsetLon = lon + (perpX * offsetKm) / (111 * Math.cos(lat * Math.PI / 180))
-                        
-                        // Check if point is in corridor (ensure polygon is closed)
-                        const corridorPoly = routeCorridor.map(v => ({ latitude: v.lat, longitude: v.lon }))
-                        // Ensure polygon is closed
-                        if (corridorPoly.length > 0 && 
-                            (corridorPoly[0].latitude !== corridorPoly[corridorPoly.length - 1].latitude ||
-                             corridorPoly[0].longitude !== corridorPoly[corridorPoly.length - 1].longitude)) {
-                            corridorPoly.push(corridorPoly[0])
-                        }
-                        const inCorridor = pointInPolygon(
-                            { latitude: offsetLat, longitude: offsetLon },
-                            corridorPoly
-                        )
-                        
-                        if (!inCorridor) continue
-                        
-                        // Convert to route coords
-                        const coords = latLonToRouteCoords(offsetLat, offsetLon, route, routeRadius)
-                        if (!coords) continue
-                        
-                        cellRequests.push({
-                            x: coords.x,
-                            y: coords.y,
-                            lat: offsetLat,
-                            lon: offsetLon
-                        })
-                    }
+                    const point = getRoutePoint(route, distance, offset)
+                    if (!point) continue
+                    
+                    if (!pointInPolygon({ latitude: point.lat, longitude: point.lon }, corridorPolygon)) continue
+                    
+                    cellRequests.push({ distance, offset, lat: point.lat, lon: point.lon })
                 }
             }
             
@@ -705,24 +490,14 @@ export default function AirspaceRoute({
                 ? cellRequests.filter((_, i) => i % Math.ceil(cellRequests.length / maxCells) === 0)
                 : cellRequests
             
-            console.log('[AirspaceRoute] Fetching elevation for', sampledCells.length, 'cells')
-            
-            // Placeholder cells
             const placeholderCells: RouteElevationCell[] = sampledCells.map(c => ({
-                x: c.x,
-                y: c.y,
+                distance: c.distance,
+                offset: c.offset,
                 lat: c.lat,
                 lon: c.lon,
                 elevation: null
             }))
             setElevationCells(placeholderCells)
-            
-            if (onElevationCellsChange) {
-                onElevationCellsChange(
-                    placeholderCells.map(c => ({ lat: c.lat, lon: c.lon, elevation: c.elevation })),
-                    0, 0
-                )
-            }
             
             try {
                 const requestBody = {
@@ -731,16 +506,11 @@ export default function AirspaceRoute({
                 
                 const response = await fetch('https://api.open-elevation.com/api/v1/lookup', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
                     body: JSON.stringify(requestBody)
                 })
                 
-                if (!response.ok) {
-                    throw new Error(`API returned ${response.status}`)
-                }
+                if (!response.ok) throw new Error(`API returned ${response.status}`)
                 
                 const data = await response.json()
                 
@@ -750,17 +520,14 @@ export default function AirspaceRoute({
                     let max = -Infinity
                     
                     for (let i = 0; i < data.results.length; i++) {
-                        const result = data.results[i]
-                        const elev = result?.elevation ?? 0
-                        
+                        const elev = data.results[i]?.elevation ?? 0
                         cells.push({
-                            x: sampledCells[i].x,
-                            y: sampledCells[i].y,
+                            distance: sampledCells[i].distance,
+                            offset: sampledCells[i].offset,
                             lat: sampledCells[i].lat,
                             lon: sampledCells[i].lon,
                             elevation: elev
                         })
-                        
                         if (elev < min) min = elev
                         if (elev > max) max = elev
                     }
@@ -788,7 +555,7 @@ export default function AirspaceRoute({
         }
         
         fetchElevationGrid()
-    }, [route, routeCorridor, routeRadius, onElevationCellsChange])
+    }, [route, routeCorridor, routeRadius, routeLength, onElevationCellsChange])
     
     if (!mounted || !route || route.length < 2) {
         return (
@@ -833,38 +600,34 @@ export default function AirspaceRoute({
                     }}
                 />
                 
-                {/* Route terrain */}
                 <RouteTerrain 
                     cells={elevationCells}
                     minElev={minElev}
                     maxElev={maxElev}
-                    route={route}
+                    routeLength={routeLength}
                     routeRadius={routeRadius}
                 />
                 
-                {/* Airspace volumes */}
                 {hasAirspace && airspacesAlongRoute.length > 0 && (
-                    <RouteAirspaceVolumes
-                        airspaces={airspacesAlongRoute}
-                        route={route}
-                        routeCorridor={routeCorridor}
-                        routeRadius={routeRadius}
-                        minAlt={0}
-                        maxAlt={18000}
-                    />
-                )}
-                
-                {/* Central altitude scale */}
-                {hasAirspace && airspacesAlongRoute.length > 0 && (
-                    <RouteCentralAltitudeScale
-                        minAlt={0}
-                        maxAlt={18000}
-                        airspaces={airspacesAlongRoute}
-                    />
+                    <>
+                        <RouteAirspaceVolumes
+                            airspaces={airspacesAlongRoute}
+                            route={route}
+                            routeCorridor={routeCorridor}
+                            routeLength={routeLength}
+                            routeRadius={routeRadius}
+                            minAlt={0}
+                            maxAlt={18000}
+                        />
+                        <RouteCentralAltitudeScale
+                            minAlt={0}
+                            maxAlt={18000}
+                            airspaces={airspacesAlongRoute}
+                        />
+                    </>
                 )}
             </Canvas>
             
-            {/* Expand/Collapse button */}
             {onToggleExpand && (
                 <button
                     onClick={onToggleExpand}

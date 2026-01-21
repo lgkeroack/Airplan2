@@ -158,23 +158,34 @@ export default function SidePanel({
 
   // Find airspaces along route corridor
   const airspacesAlongRoute = useMemo(() => {
-    if (!routeCorridor || routeCorridor.length < 3) return []
+    if (!routeCorridor || !Array.isArray(routeCorridor) || routeCorridor.length < 3) {
+      console.log('[SidePanel] Invalid route corridor:', routeCorridor)
+      return []
+    }
 
     const allAirspaces: AirspaceData[] = []
     allAirspaceData.forEach(source => {
       allAirspaces.push(...source.data)
     })
 
-    // Convert routeCorridor to polygon format (array of {latitude, longitude})
-    const polygon = routeCorridor.map(v => ({
-      latitude: v.lat,
-      longitude: v.lon
-    }))
+    // Convert routeCorridor to polygon format (array of {lat, lon}) - findAirspacesInPolygon expects {lat, lon}
+    const polygon = routeCorridor
+      .filter(v => v && typeof v.lat === 'number' && typeof v.lon === 'number')
+      .map(v => ({
+        lat: v.lat,
+        lon: v.lon
+      }))
+
+    if (polygon.length < 3) {
+      console.log('[SidePanel] Polygon has insufficient valid vertices:', polygon.length)
+      return []
+    }
 
     console.log('[SidePanel] Searching for airspaces along route corridor with', polygon.length, 'vertices')
     console.log('[SidePanel] Total airspaces to search:', allAirspaces.length)
     
-    const found = findAirspacesInPolygon(polygon, allAirspaces)
+    try {
+      const found = findAirspacesInPolygon(polygon, allAirspaces)
       .sort((a, b) => {
         // Sort by altitude floor (lowest first)
         const aFloor = a.altitude?.floor || 0
@@ -182,12 +193,16 @@ export default function SidePanel({
         return aFloor - bFloor
       })
     
-    console.log('[SidePanel] Found', found.length, 'airspaces along route')
-    found.forEach((a, i) => {
-      console.log(`  [${i}] ${a.type} (${a.id}): floor=${a.altitude?.floor}, ceiling=${a.altitude?.ceiling}`)
-    })
-    
-    return found
+      console.log('[SidePanel] Found', found.length, 'airspaces along route')
+      found.forEach((a, i) => {
+        console.log(`  [${i}] ${a.type} (${a.id}): floor=${a.altitude?.floor}, ceiling=${a.altitude?.ceiling}`)
+      })
+      
+      return found
+    } catch (error) {
+      console.error('[SidePanel] Error finding airspaces along route:', error)
+      return []
+    }
   }, [routeCorridor, allAirspaceData])
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
