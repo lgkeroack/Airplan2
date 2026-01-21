@@ -874,9 +874,9 @@ export default function SidePanel({
                                   <div style={{ fontWeight: 'bold', color: '#111827', marginBottom: '4px' }}>
                                     {airspace.type} - {airspace.id}
                                   </div>
-                                  {airspace.name && (
+                                  {airspace.location && (
                                     <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>
-                                      {airspace.name}
+                                      {airspace.location}
                                     </div>
                                   )}
                                   <div style={{ fontSize: '12px', color: '#374151' }}>
