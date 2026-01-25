@@ -7,7 +7,6 @@ import dynamic from 'next/dynamic'
 import type { ElevationCellData } from './AirspaceCylinder'
 
 const AirspaceCylinder = dynamic(() => import('./AirspaceCylinder'), { ssr: false })
-<<<<<<< HEAD
 const RouteTerrainProfile = dynamic(() => import('./RouteTerrainProfile'), { ssr: false })
 const TerrainProfile3D = dynamic(() => import('./RouteTerrainProfileCanvas.client'), {
   ssr: false,
@@ -32,9 +31,6 @@ function formatAirspaceDate(dateStr: string | undefined): string | null {
     return null
   }
 }
-=======
-const AirspaceRoute = dynamic(() => import('./AirspaceRoute'), { ssr: false })
->>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
 
 interface Layer {
   id: string
@@ -72,14 +68,8 @@ interface SidePanelProps {
   fetchRadius?: number
   onFetchRadiusChange?: (radius: number) => void
   onElevationCellsChange?: (cells: ElevationCellData[], minElev: number, maxElev: number) => void
-<<<<<<< HEAD
   selectedRoute?: RouteData
   activeTab?: 'layers' | 'files' | 'aircolumn' | 'search' | 'settings'
-=======
-  route?: Array<{ lat: number; lon: number }> | null
-  routeCorridor?: Array<{ lat: number; lon: number }> | null
-  routeRadius?: number
->>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
 }
 
 export default function SidePanel({
@@ -105,14 +95,8 @@ export default function SidePanel({
   fetchRadius: fetchRadiusProp = 5,
   onFetchRadiusChange,
   onElevationCellsChange,
-<<<<<<< HEAD
   selectedRoute,
   activeTab: activeTabProp,
-=======
-  route,
-  routeCorridor,
-  routeRadius = 1,
->>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
 }: SidePanelProps) {
   const [activeTab, setActiveTab] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings' | undefined>(activeTabProp)
   const [activeTabState, setActiveTabState] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings' | undefined>(activeTabProp)
@@ -233,58 +217,6 @@ export default function SidePanel({
     return found
   }, [clickedPoint, allAirspaceData, fetchRadius])
 
-<<<<<<< HEAD
-
-=======
-  // Find airspaces along route corridor
-  const airspacesAlongRoute = useMemo(() => {
-    if (!routeCorridor || !Array.isArray(routeCorridor) || routeCorridor.length < 3) {
-      console.log('[SidePanel] Invalid route corridor:', routeCorridor)
-      return []
-    }
-
-    const allAirspaces: AirspaceData[] = []
-    allAirspaceData.forEach(source => {
-      allAirspaces.push(...source.data)
-    })
-
-    // Convert routeCorridor to polygon format (array of {lat, lon}) - findAirspacesInPolygon expects {lat, lon}
-    const polygon = routeCorridor
-      .filter(v => v && typeof v.lat === 'number' && typeof v.lon === 'number')
-      .map(v => ({
-        lat: v.lat,
-        lon: v.lon
-      }))
-
-    if (polygon.length < 3) {
-      console.log('[SidePanel] Polygon has insufficient valid vertices:', polygon.length)
-      return []
-    }
-
-    console.log('[SidePanel] Searching for airspaces along route corridor with', polygon.length, 'vertices')
-    console.log('[SidePanel] Total airspaces to search:', allAirspaces.length)
-    
-    try {
-      const found = findAirspacesInPolygon(polygon, allAirspaces)
-      .sort((a, b) => {
-        // Sort by altitude floor (lowest first)
-        const aFloor = a.altitude?.floor || 0
-        const bFloor = b.altitude?.floor || 0
-        return aFloor - bFloor
-      })
-    
-      console.log('[SidePanel] Found', found.length, 'airspaces along route')
-      found.forEach((a, i) => {
-        console.log(`  [${i}] ${a.type} (${a.id}): floor=${a.altitude?.floor}, ceiling=${a.altitude?.ceiling}`)
-      })
-      
-      return found
-    } catch (error) {
-      console.error('[SidePanel] Error finding airspaces along route:', error)
-      return []
-    }
-  }, [routeCorridor, allAirspaceData])
->>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -1022,7 +954,6 @@ export default function SidePanel({
 
                 {activeTab === 'aircolumn' && (
                   <div>
-<<<<<<< HEAD
                     {selectedRoute ? (
                       <div style={{ border: '4px solid yellow', boxShadow: '0 0 10px yellow', borderRadius: '8px', padding: '12px' }}>
                         <div style={{ marginBottom: '16px', fontSize: '14px', color: '#6b7280' }}>
@@ -1037,7 +968,7 @@ export default function SidePanel({
                           airspaceData={allAirspaceData.flatMap(source => source.data)}
                           onElevationDataChange={handleElevationDataChange}
                         />
-                        
+
                         {/* Render the 3D profile directly here to guarantee client-only context */}
                         {terrain3DData.cells.length > 0 && (
                           <div style={{ marginTop: '16px' }}>
@@ -1055,81 +986,6 @@ export default function SidePanel({
                           </div>
                         )}
                       </div>
-=======
-                    {route && route.length > 0 ? (
-                      <>
-                        <div style={{ marginBottom: '16px', fontSize: '14px', color: '#6b7280' }}>
-                          <div><strong>Route:</strong> {route.length} waypoints</div>
-                          <div><strong>Corridor Width:</strong> {routeRadius} km</div>
-                        </div>
-
-                        {/* Airspace List */}
-                        {airspacesAlongRoute.length > 0 ? (
-                          <div style={{ marginBottom: '16px' }}>
-                            <h3 style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '12px', color: '#111827' }}>
-                              Airspaces Along Route ({airspacesAlongRoute.length})
-                            </h3>
-                            <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '6px' }}>
-                              {airspacesAlongRoute.map((airspace, idx) => (
-                                <div
-                                  key={airspace.id || idx}
-                                  onClick={() => onAirspaceSelect?.(airspace.id)}
-                                  style={{
-                                    padding: '12px',
-                                    borderBottom: idx < airspacesAlongRoute.length - 1 ? '1px solid #e5e7eb' : 'none',
-                                    cursor: 'pointer',
-                                    backgroundColor: selectedAirspaceId === airspace.id ? '#eff6ff' : 'white',
-                                    transition: 'background-color 0.2s'
-                                  }}
-                                  onMouseEnter={(e) => {
-                                    if (selectedAirspaceId !== airspace.id) {
-                                      e.currentTarget.style.backgroundColor = '#f9fafb'
-                                    }
-                                  }}
-                                  onMouseLeave={(e) => {
-                                    if (selectedAirspaceId !== airspace.id) {
-                                      e.currentTarget.style.backgroundColor = 'white'
-                                    }
-                                  }}
-                                >
-                                  <div style={{ fontWeight: 'bold', color: '#111827', marginBottom: '4px' }}>
-                                    {airspace.type} - {airspace.id}
-                                  </div>
-                                  {airspace.location && (
-                                    <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>
-                                      {airspace.location}
-                                    </div>
-                                  )}
-                                  <div style={{ fontSize: '12px', color: '#374151' }}>
-                                    {airspace.altitude?.floor !== undefined && (
-                                      <span>Floor: {Math.round(airspace.altitude.floor / 3.28084)}m </span>
-                                    )}
-                                    {airspace.altitude?.ceiling !== undefined && (
-                                      <span>Ceiling: {Math.round(airspace.altitude.ceiling / 3.28084)}m</span>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ) : (
-                          <div style={{ padding: '20px', textAlign: 'center', color: '#6b7280', marginBottom: '16px' }}>
-                            No airspaces found along this route
-                          </div>
-                        )}
-
-                        {/* Route 3D Visualization */}
-                        <AirspaceRoute
-                          route={route}
-                          routeCorridor={routeCorridor}
-                          routeRadius={routeRadius}
-                          hasAirspace={airspacesAlongRoute.length > 0}
-                          airspacesAlongRoute={airspacesAlongRoute}
-                          isExpanded={is3DExpanded}
-                          onToggleExpand={() => setIs3DExpanded(!is3DExpanded)}
-                        />
-                      </>
->>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
                     ) : clickedPoint ? (
                       <>
                         <div style={{ marginBottom: '16px', fontSize: '14px', color: '#6b7280' }}>
@@ -1494,10 +1350,7 @@ export default function SidePanel({
                           airspacesAtPoint={airspacesAtPoint}
                           isExpanded={is3DExpanded}
                           onToggleExpand={() => setIs3DExpanded(!is3DExpanded)}
-<<<<<<< HEAD
                           selectedBasemap={selectedBasemap}
-=======
->>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
                         />
                       </>
                     ) : (
