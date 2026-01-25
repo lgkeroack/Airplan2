@@ -1,28 +1,40 @@
 'use client'
 
-import { MapContainer, TileLayer, Circle, Polygon, Popup, useMap, useMapEvents } from 'react-leaflet'
-import L, { LatLngExpression, Map as LeafletMap } from 'leaflet'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Circle, Polyline, Polygon } from 'react-leaflet'
+import { DivIcon } from 'leaflet'
+import { LatLngExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+<<<<<<< HEAD
 import React, { useEffect, useState, useRef, useMemo, useCallback, useId } from 'react'
+=======
+>>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
 import SidePanel from './SidePanel'
 import { findAirspacesAtPoint, findAirspacesNearby } from '@/lib/point-in-airspace'
 
 import dynamic from 'next/dynamic'
 import RouteBuilderUI from './RouteBuilderUI'
 import type { AirspaceData } from '@/lib/types'
+<<<<<<< HEAD
 import { validateOpenAirFile } from '@/lib/validate-openair'
 
 const RouteOverlay = dynamic(() => import('./RouteOverlay'), { ssr: false })
 import type { ElevationCellData } from './AirspaceCylinder'
+=======
+import L from 'leaflet'
+>>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
 
-
-interface Layer {
-  id: string
-  name: string
-  visible: boolean
-  opacity: number
+// Fix for default marker icon in Next.js
+if (typeof window !== 'undefined') {
+  delete (L.Icon.Default.prototype as any)._getIconUrl
+  L.Icon.Default.mergeOptions({
+    iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+    iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+  })
 }
 
+<<<<<<< HEAD
 // Check if two line segments intersect (for self-intersection detection)
 
 
@@ -329,28 +341,188 @@ function MapClickHandler({
         west: bounds.getWest()
       })
     }
-  })
+=======
+interface AirspaceMapProps {
+  initialData?: AirspaceData[]
+}
 
+// Generate a corridor polygon from a route path
+// Creates a "meandering slot" shape: semicircles at ends connected by a corridor
+function generateRouteCorridor(
+  route: Array<{ lat: number; lon: number }>,
+  radiusKm: number
+): Array<{ lat: number; lon: number }> {
+  if (route.length < 2) return []
+  
+  const vertices: Array<{ lat: number; lon: number }> = []
+  
+  // Helper: Calculate distance between two points in km
+  const distanceKm = (p1: { lat: number; lon: number }, p2: { lat: number; lon: number }): number => {
+    const dx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
+    const dy = (p2.lat - p1.lat) * 111
+    return Math.sqrt(dx * dx + dy * dy)
+  }
+  
+  // Helper: Get perpendicular offset point
+  const getPerpOffset = (
+    p1: { lat: number; lon: number },
+    p2: { lat: number; lon: number },
+    offsetKm: number
+  ): { left: { lat: number; lon: number }, right: { lat: number; lon: number } } => {
+    const dx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
+    const dy = (p2.lat - p1.lat) * 111
+    const len = Math.sqrt(dx * dx + dy * dy)
+    
+    if (len === 0) {
+      return { left: p1, right: p1 }
+    }
+    
+    // Perpendicular vector (normalized)
+    const perpX = -dy / len
+    const perpY = dx / len
+    
+    // Convert offset to degrees
+    const offsetLat = (offsetKm / 111) * perpY
+    const offsetLon = (offsetKm / (111 * Math.cos(p1.lat * Math.PI / 180))) * perpX
+    
+    return {
+      left: { lat: p1.lat + offsetLat, lon: p1.lon + offsetLon },
+      right: { lat: p1.lat - offsetLat, lon: p1.lon - offsetLon }
+    }
+  }
+  
+  // Generate semicircle points
+  const generateSemicircle = (
+    center: { lat: number; lon: number },
+    direction: { lat: number; lon: number }, // Point the semicircle faces
+    radiusKm: number,
+    segments: number = 16
+  ): Array<{ lat: number; lon: number }> => {
+    const points: Array<{ lat: number; lon: number }> = []
+    
+    // Calculate direction vector
+    const dx = (direction.lon - center.lon) * 111 * Math.cos(center.lat * Math.PI / 180)
+    const dy = (direction.lat - center.lat) * 111
+    const len = Math.sqrt(dx * dx + dy * dy)
+    
+    if (len === 0) return []
+    
+    // Angle of direction
+    const dirAngle = Math.atan2(dy, dx)
+    
+    // Generate semicircle (facing the direction)
+    const radiusDegLat = radiusKm / 111
+    const radiusDegLon = radiusKm / (111 * Math.cos(center.lat * Math.PI / 180))
+    
+    for (let i = 0; i <= segments; i++) {
+      // Semicircle from -90° to +90° relative to direction
+      const angle = dirAngle - Math.PI / 2 + (i / segments) * Math.PI
+      points.push({
+        lat: center.lat + Math.cos(angle) * radiusDegLat,
+        lon: center.lon + Math.sin(angle) * radiusDegLon
+      })
+    }
+    
+    return points
+  }
+  
+  // Build left and right sides of corridor
+  const leftSide: Array<{ lat: number; lon: number }> = []
+  const rightSide: Array<{ lat: number; lon: number }> = []
+  
+  // For each segment, add points on left and right sides
+  for (let i = 0; i < route.length - 1; i++) {
+    const p1 = route[i]
+    const p2 = route[i + 1]
+    
+    // Get perpendicular offsets for this segment
+    const offset = getPerpOffset(p1, p2, radiusKm)
+    
+    if (i === 0) {
+      // First segment - add points at p1
+      leftSide.push(offset.left)
+      rightSide.push(offset.right)
+    }
+    
+    // Add points at p2
+    if (i < route.length - 2) {
+      // Not the last segment - smooth transition at p2
+      const p3 = route[i + 2]
+      const offsetNext = getPerpOffset(p2, p3, radiusKm)
+      
+      // Average for smooth corner
+      leftSide.push({
+        lat: (offset.left.lat + offsetNext.left.lat) / 2,
+        lon: (offset.left.lon + offsetNext.left.lon) / 2
+      })
+      rightSide.push({
+        lat: (offset.right.lat + offsetNext.right.lat) / 2,
+        lon: (offset.right.lon + offsetNext.right.lon) / 2
+      })
+    } else {
+      // Last segment - use offsets directly at p2
+      leftSide.push(offset.left)
+      rightSide.push(offset.right)
+    }
+  }
+  
+  // Build polygon: start semicircle → left side → end semicircle (reversed) → right side (reversed)
+  if (route.length >= 2) {
+    // Start semicircle (facing first segment)
+    const startSemi = generateSemicircle(route[0], route[1], radiusKm)
+    vertices.push(...startSemi)
+  }
+  
+  // Left side
+  vertices.push(...leftSide)
+  
+  // End semicircle (facing backward from last segment, reversed)
+  if (route.length >= 2) {
+    const endSemi = generateSemicircle(
+      route[route.length - 1],
+      route[route.length - 2],
+      radiusKm
+    ).reverse()
+    vertices.push(...endSemi)
+  }
+  
+  // Right side (reversed to close polygon)
+  vertices.push(...rightSide.reverse())
+  
+  // Close polygon
+  if (vertices.length > 0 && 
+      (vertices[0].lat !== vertices[vertices.length - 1].lat ||
+       vertices[0].lon !== vertices[vertices.length - 1].lon)) {
+    vertices.push(vertices[0])
+  }
+  
+  return vertices
+}
+
+function MapClickHandler({ onMapClick }: { onMapClick: (lat: number, lon: number) => void }) {
+  useMapEvents({
+    click: (e) => {
+      onMapClick(e.latlng.lat, e.latlng.lng)
+    },
+>>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
+  })
   return null
 }
 
-// Get color for airspace type/class
-function getAirspaceColor(type: string): string {
-  const colors: Record<string, string> = {
-    'TFR': '#ff0000', // Red
-    'Restricted': '#d946ef', // Fuchsia/Purple
-    'Prohibited': '#4b5563', // Grey/Slate
-    'NOTAM': '#f97316', // Orange
-    'Alert': '#eab308', // Yellow
-    'Caution': '#fbbf24', // Amber
-    'Class A': '#8b5cf6', // Violet
-    'Class B': '#2563eb', // Blue
-    'Class C': '#db2777', // Magenta/Pink
-    'Class D': '#0ea5e9', // Sky Blue
-    'Class E': '#6366f1', // Indigo
-    'Class G': '#22c55e', // Green
-    'Warning': '#ef4444', // Light Red
+// Get point at a specific distance along the route
+function getRoutePointAtDistance(
+  route: Array<{ lat: number; lon: number }>,
+  distanceKm: number
+): { lat: number; lon: number } | null {
+  if (route.length < 2) return null
+  
+  // Calculate distance between two points in km
+  const distanceKmBetween = (p1: { lat: number; lon: number }, p2: { lat: number; lon: number }): number => {
+    const dx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
+    const dy = (p2.lat - p1.lat) * 111
+    return Math.sqrt(dx * dx + dy * dy)
   }
+<<<<<<< HEAD
 
   // Try to match partial names if exact match fails
   if (!colors[type]) {
@@ -537,25 +709,73 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
   }, [routePoints])
 
 
+=======
+  
+  let accumulatedDist = 0
+  
+  for (let i = 0; i < route.length - 1; i++) {
+    const p1 = route[i]
+    const p2 = route[i + 1]
+    const segLen = distanceKmBetween(p1, p2)
+    
+    if (accumulatedDist + segLen >= distanceKm) {
+      // Point is on this segment
+      const t = (distanceKm - accumulatedDist) / segLen
+      return {
+        lat: p1.lat + t * (p2.lat - p1.lat),
+        lon: p1.lon + t * (p2.lon - p1.lon)
+      }
+    }
+    
+    accumulatedDist += segLen
+  }
+  
+  // Return last point if distance exceeds route length
+  return route[route.length - 1]
+}
+>>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
 
-  // Basemap options - all free tile providers without API keys
+// Calculate total route length
+function calculateRouteLength(route: Array<{ lat: number; lon: number }>): number {
+  if (route.length < 2) return 0
+  
+  const distanceKm = (p1: { lat: number; lon: number }, p2: { lat: number; lon: number }): number => {
+    const dx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
+    const dy = (p2.lat - p1.lat) * 111
+    return Math.sqrt(dx * dx + dy * dy)
+  }
+  
+  let total = 0
+  for (let i = 0; i < route.length - 1; i++) {
+    total += distanceKm(route[i], route[i + 1])
+  }
+  return total
+}
+
+export default function AirspaceMap({ initialData = [] }: AirspaceMapProps) {
+  const [clickedPoint, setClickedPoint] = useState<{ lat: number; lon: number } | null>(null)
+  const [fetchRadius, setFetchRadius] = useState(5)
+  const [isDrawingRoute, setIsDrawingRoute] = useState(false)
+  const [routeVertices, setRouteVertices] = useState<Array<{ lat: number; lon: number }>>([])
+  const [routeRadius, setRouteRadius] = useState(5)
+  const [completedRoute, setCompletedRoute] = useState<Array<{ lat: number; lon: number }> | null>(null)
+  const [routeCorridor, setRouteCorridor] = useState<Array<{ lat: number; lon: number }> | null>(null)
+  const [isRouteLoading, setIsRouteLoading] = useState(false)
+  const [isSidePanelOpen, setIsSidePanelOpen] = useState(true)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  
+  // Layers and basemap state
+  const [layers, setLayers] = useState<Array<{ id: string; name: string; visible: boolean; opacity: number }>>([
+    { id: 'airspace', name: 'Airspace', visible: true, opacity: 0.7 }
+  ])
+  const [selectedBasemap, setSelectedBasemap] = useState('topographic')
+  
   const basemapOptions = [
-    { id: 'openstreetmap', name: 'OpenStreetMap Standard' },
-    { id: 'osm-humanitarian', name: 'OpenStreetMap Humanitarian' },
-    { id: 'topographic', name: 'OpenTopoMap' },
-    { id: 'cartodb-positron', name: 'CartoDB Positron (Light)' },
-    { id: 'cartodb-dark', name: 'CartoDB Dark Matter' },
-    { id: 'cartodb-voyager', name: 'CartoDB Voyager' },
-    { id: 'esri-imagery', name: 'Esri World Imagery (Satellite)' },
-    { id: 'esri-topo', name: 'Esri World Topographic' },
-    { id: 'esri-street', name: 'Esri World Street Map' },
-    { id: 'esri-gray', name: 'Esri Light Gray Canvas' },
-    { id: 'esri-ocean', name: 'Esri Ocean Basemap' },
-    { id: 'esri-natgeo', name: 'Esri National Geographic' },
-    { id: 'stadia-outdoors', name: 'Stadia Outdoors' },
-    { id: 'stadia-bright', name: 'Stadia OSM Bright' },
-    { id: 'cyclosm', name: 'CyclOSM (Cycling)' },
+    { id: 'topographic', name: 'Topographic' },
+    { id: 'satellite', name: 'Satellite' },
+    { id: 'street', name: 'Street Map' }
   ]
+<<<<<<< HEAD
 
   // Selected basemap
   const [selectedBasemap, setSelectedBasemap] = useState<string>('topographic')
@@ -605,210 +825,33 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     } catch (error) {
       console.error('Error searching location:', error)
     }
+=======
+  
+  const handleLayerToggle = useCallback((layerId: string) => {
+    setLayers(prev => prev.map(layer => 
+      layer.id === layerId ? { ...layer, visible: !layer.visible } : layer
+    ))
+  }, [])
+  
+  const handleLayerOpacityChange = useCallback((layerId: string, opacity: number) => {
+    setLayers(prev => prev.map(layer => 
+      layer.id === layerId ? { ...layer, opacity } : layer
+    ))
+  }, [])
+  
+  const handleBasemapChange = useCallback((basemapId: string) => {
+    setSelectedBasemap(basemapId)
+>>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
   }, [])
 
-
-  // Airspace type visibility - get all unique types from data
-  const allTypes = useMemo(() => Array.from(new Set([
-    ...initialData.map(item => item.type),
-    ...uploadedFiles.flatMap(file => file.data.map(item => item.type))
-  ])).sort(), [initialData, uploadedFiles])
-
-  // Combined list of all airspaces for point lookups
-  const allAirspaces = useMemo(() => [
-    ...airspaceData,
-    ...uploadedFiles.flatMap(file => file.data)
-  ], [airspaceData, uploadedFiles])
-
-  // Generate popup content showing all airspaces at a given point
-  // clickedAirspace: optionally include this airspace even if point-in-polygon fails
-  const generatePopupContent = useCallback((lat: number, lon: number, clickedAirspace?: AirspaceData) => {
-    let airspacesAtPoint = findAirspacesAtPoint({ latitude: lat, longitude: lon }, allAirspaces)
-
-    // If we have a clicked airspace but it's not in the list (point-in-polygon failed for complex shape),
-    // add it to the results
-    if (clickedAirspace && !airspacesAtPoint.some(a => a.id === clickedAirspace.id)) {
-      airspacesAtPoint = [clickedAirspace, ...airspacesAtPoint]
-    }
-
-    // Sort by ceiling, highest first
-    airspacesAtPoint.sort((a, b) => (b.altitude?.ceiling || 0) - (a.altitude?.ceiling || 0))
-
-    if (airspacesAtPoint.length === 0) {
-      return <div style={{ minWidth: '200px' }}>No airspace data at this location</div>
-    }
-
-    return (
-      <div style={{
-        minWidth: '250px',
-        maxWidth: '80vw',
-        maxHeight: '40vh',
-        overflowY: 'auto',
-        fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif"
-      }}>
-        {/* Location Details Header */}
-        <div style={{ borderBottom: '1px solid #e5e7eb', paddingBottom: '12px', marginBottom: '12px' }}>
-          <div style={{ fontSize: '13px', color: '#111827', fontWeight: 'bold' }}>
-            {lat.toFixed(4)}°, {lon.toFixed(4)}°
-          </div>
-          <div style={{ fontSize: '13px', color: '#3b82f6', fontWeight: 'bold', marginTop: '1px' }}>
-            {elevation !== null ? `${Math.round(elevation * 3.28084)} ft | ${elevation} m MSL` : 'Elevation loading...'}
-          </div>
-        </div>
-
-        <div style={{ fontWeight: 'bold', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#6b7280', marginBottom: '8px', borderBottom: '1px solid #eee', paddingBottom: '4px' }}>
-          {airspacesAtPoint.length} Airspace{airspacesAtPoint.length > 1 ? 's' : ''} Identified
-        </div>
-        {airspacesAtPoint.map((item, index) => (
-          <div
-            key={item.id}
-            style={{
-              marginBottom: index < airspacesAtPoint.length - 1 ? '12px' : '0',
-              paddingBottom: index < airspacesAtPoint.length - 1 ? '12px' : '0',
-              borderBottom: index < airspacesAtPoint.length - 1 ? '1px solid #eee' : 'none'
-            }}
-          >
-            <strong style={{ color: getAirspaceColor(item.type) }}>{item.type}: {item.notamNumber}</strong>
-            <br />
-            {item.altitude && (
-              <>
-                <span style={{ fontSize: '12px' }}>
-                  <strong>Altitude:</strong> {item.altitude.floor} - {item.altitude.ceiling} ft
-                </span>
-                <br />
-              </>
-            )}
-            <span style={{ fontSize: '11px', color: '#666' }}>{item.location}</span>
-          </div>
-        ))}
-      </div>
-    )
-  }, [allAirspaces, elevation])
-
-  const [visibleTypes, setVisibleTypes] = useState<Set<string>>(() =>
-    new Set(allTypes) // All types visible by default
-  )
-
-  // Update visible types when allTypes changes (e.g., when files are uploaded)
+  // Sync routeRadius with fetchRadius when not drawing
   useEffect(() => {
-    setVisibleTypes(prev => {
-      const next = new Set(prev)
-      // Add new types that aren't in the set
-      allTypes.forEach(type => {
-        if (!next.has(type)) {
-          next.add(type)
-        }
-      })
-      return next
-    })
-  }, [allTypes.join(',')])
+    if (!isDrawingRoute) {
+      setRouteRadius(fetchRadius)
+    }
+  }, [fetchRadius, isDrawingRoute])
 
-  // Handle airspace type visibility toggle
-  const handleTypeToggle = (type: string) => {
-    setVisibleTypes(prev => {
-      const next = new Set(prev)
-      if (next.has(type)) {
-        next.delete(type)
-      } else {
-        next.add(type)
-      }
-      return next
-    })
-  }
-
-  // Handle layer visibility toggle
-  const handleLayerToggle = (layerId: string) => {
-    setLayers(layers.map(layer =>
-      layer.id === layerId
-        ? { ...layer, visible: !layer.visible }
-        : layer
-    ))
-  }
-
-  // Handle layer opacity change
-  const handleLayerOpacityChange = (layerId: string, opacity: number) => {
-    setLayers(layers.map(layer =>
-      layer.id === layerId
-        ? { ...layer, opacity }
-        : layer
-    ))
-  }
-
-  // Handle file upload
-  const handleFileUpload = async (file: File): Promise<void> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-
-      reader.onload = async (e) => {
-        try {
-          const content = e.target?.result as string
-
-          // Validate file format
-          const validation = validateOpenAirFile(content)
-          if (!validation.isValid) {
-            reject(new Error(`Invalid OpenAir file: ${validation.errors.join('; ')}`))
-            return
-          }
-
-          // Send to API for processing (server-side, uses cache if available)
-          const formData = new FormData()
-          formData.append('file', new Blob([content], { type: 'text/plain' }), file.name)
-          formData.append('fileName', file.name)
-
-          const response = await fetch('/api/process-file', {
-            method: 'POST',
-            body: formData,
-          })
-
-          if (!response.ok) {
-            let errorMessage = 'Failed to process file'
-            try {
-              const errorData = await response.json()
-              errorMessage = errorData.error || errorMessage
-            } catch {
-              errorMessage = `Server error: ${response.status} ${response.statusText}`
-            }
-            reject(new Error(errorMessage))
-            return
-          }
-
-          const result = await response.json()
-          const converted = result.data as AirspaceData[]
-
-          if (!converted || converted.length === 0) {
-            reject(new Error('No airspace data found in file'))
-            return
-          }
-
-          // Generate unique ID for this file layer
-          const fileId = `file-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-          const fileName = file.name
-
-          // Add file data
-          setUploadedFiles(prev => [...prev, { id: fileId, name: fileName, data: converted }])
-
-          // Add as layer
-          setLayers(prev => [...prev, {
-            id: fileId,
-            name: fileName,
-            visible: true,
-            opacity: 1.0
-          }])
-
-          resolve()
-        } catch (error: any) {
-          reject(new Error(`Failed to process file: ${error.message}`))
-        }
-      }
-
-      reader.onerror = () => {
-        reject(new Error('Failed to read file'))
-      }
-
-      reader.readAsText(file)
-    })
-  }
-
+<<<<<<< HEAD
   const handleMapClick = useCallback((lat: number, lon: number, event?: L.LeafletMouseEvent) => {
     // Normalize coordinates to 6 decimal places to prevent tiny epsilon changes
     const nLat = Number(lat.toFixed(6))
@@ -1018,42 +1061,149 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
       setRedoStack([])
     }
   }, [isDrawingRoute, routePoints, fetchRadius])
+=======
+  const handleMapClick = useCallback((lat: number, lon: number) => {
+    if (isRouteLoading) return
+    
+    if (isDrawingRoute) {
+      setRouteVertices(prev => [...prev, { lat, lon }])
+    } else {
+      setClickedPoint({ lat, lon })
+      setCompletedRoute(null)
+      setRouteCorridor(null)
+    }
+  }, [isDrawingRoute, isRouteLoading])
 
-  // Handle airspace selection from side panel
-  const handleAirspaceSelect = useCallback((ids: string | string[]) => {
-    setSelectedAirspaceId(ids)
+  const startRouteDrawing = useCallback(() => {
+    setIsDrawingRoute(true)
+    setRouteVertices([])
+    setClickedPoint(null)
+    setCompletedRoute(null)
+    setRouteCorridor(null)
+  }, [])
+>>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
 
-    const idList = Array.isArray(ids) ? ids : [ids]
-    const selectedAirspaces = allAirspaces.filter(a => idList.includes(a.id))
+  const addRouteVertex = useCallback((lat: number, lon: number) => {
+    if (isRouteLoading) return
+    setRouteVertices(prev => [...prev, { lat, lon }])
+  }, [isRouteLoading])
 
-    if (selectedAirspaces.length > 0 && mapRef.current) {
-      const allPoints: [number, number][] = []
+  const undoRouteVertex = useCallback(() => {
+    if (isRouteLoading) return
+    setRouteVertices(prev => prev.slice(0, -1))
+  }, [isRouteLoading])
 
-      selectedAirspaces.forEach(airspace => {
-        if (airspace.polygon && airspace.polygon.length > 0) {
-          airspace.polygon.forEach(p => allPoints.push([p.latitude, p.longitude]))
-        } else if (airspace.coordinates) {
-          const lat = airspace.coordinates.latitude
-          const lon = airspace.coordinates.longitude
-          if (airspace.radius) {
-            const radiusDeg = airspace.radius / 60
-            allPoints.push([lat - radiusDeg, lon - radiusDeg])
-            allPoints.push([lat + radiusDeg, lon + radiusDeg])
-          } else {
-            allPoints.push([lat, lon])
+  const splitRouteSegment = useCallback((lat: number, lon: number, segmentIndex: number) => {
+    if (isRouteLoading) return
+    setRouteVertices(prev => {
+      const newVertices = [...prev]
+      newVertices.splice(segmentIndex + 1, 0, { lat, lon })
+      return newVertices
+    })
+  }, [isRouteLoading])
+
+  const finishRouteDrawing = useCallback(async () => {
+    if (routeVertices.length < 2 || isRouteLoading) return
+    
+    setIsRouteLoading(true)
+    try {
+      const corridor = generateRouteCorridor(routeVertices, routeRadius)
+      setCompletedRoute([...routeVertices])
+      setRouteCorridor(corridor)
+      setIsDrawingRoute(false)
+    } catch (error) {
+      console.error('Error finishing route:', error)
+    } finally {
+      setIsRouteLoading(false)
+    }
+  }, [routeVertices, routeRadius, isRouteLoading])
+
+  const cancelRouteDrawing = useCallback(() => {
+    setIsDrawingRoute(false)
+    setRouteVertices([])
+    setCompletedRoute(null)
+    setRouteCorridor(null)
+  }, [])
+
+  const importRoute = useCallback(async (file: File) => {
+    if (isRouteLoading) return
+    
+    setIsRouteLoading(true)
+    try {
+      const text = await file.text()
+      const vertices: Array<{ lat: number; lon: number }> = []
+      
+      if (file.name.endsWith('.gpx')) {
+        const parser = new DOMParser()
+        const xml = parser.parseFromString(text, 'text/xml')
+        const trkpts = xml.querySelectorAll('trkpt, wpt, rtept')
+        trkpts.forEach(pt => {
+          const lat = parseFloat(pt.getAttribute('lat') || '0')
+          const lon = parseFloat(pt.getAttribute('lon') || '0')
+          if (lat && lon) vertices.push({ lat, lon })
+        })
+      } else if (file.name.endsWith('.igc')) {
+        const lines = text.split('\n')
+        lines.forEach(line => {
+          if (line.startsWith('B')) {
+            const latStr = line.substring(7, 15)
+            const lonStr = line.substring(15, 24)
+            const lat = parseFloat(latStr.substring(0, 2)) + parseFloat(latStr.substring(2)) / 60
+            const lon = parseFloat(lonStr.substring(0, 3)) + parseFloat(lonStr.substring(3)) / 60
+            if (lat && lon) vertices.push({ lat, lon })
           }
-        }
-      })
-
-      if (allPoints.length > 0) {
-        mapRef.current.fitBounds(allPoints as any, {
-          paddingBottomRight: [isPanelOpen ? 500 : 50, 50],
-          paddingTopLeft: [50, 50],
-          maxZoom: 12,
-          animate: true
         })
       }
+      
+      if (vertices.length >= 2) {
+        setRouteVertices(vertices)
+        const corridor = generateRouteCorridor(vertices, routeRadius)
+        setCompletedRoute(vertices)
+        setRouteCorridor(corridor)
+        setIsDrawingRoute(false)
+      }
+    } catch (error) {
+      console.error('Error importing route:', error)
+    } finally {
+      setIsRouteLoading(false)
     }
+  }, [routeRadius, isRouteLoading])
+
+  const handleRouteFileImport = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      importRoute(file)
+    }
+  }, [importRoute])
+
+  const routePolyline = useMemo(() => {
+    if (routeVertices.length < 2) return null
+    return routeVertices.map(v => [v.lat, v.lon] as LatLngExpression)
+  }, [routeVertices])
+
+  const routeCorridorPolygon = useMemo(() => {
+    if (!routeCorridor || routeCorridor.length < 3) return null
+    return routeCorridor.map(v => [v.lat, v.lon] as LatLngExpression)
+  }, [routeCorridor])
+
+  // Generate distance markers along the route
+  const routeDistanceMarkers = useMemo(() => {
+    if (!completedRoute || completedRoute.length < 2) return []
+    
+    const routeLength = calculateRouteLength(completedRoute)
+    if (routeLength === 0) return []
+    
+    // Place markers every 1km, or every 5km if route is very long
+    const interval = routeLength > 50 ? 5 : 1
+    const markers: Array<{ distance: number; lat: number; lon: number }> = []
+    
+    for (let d = 0; d <= routeLength; d += interval) {
+      const point = getRoutePointAtDistance(completedRoute, d)
+      if (point) {
+        markers.push({ distance: Math.round(d), ...point })
+      }
+    }
+<<<<<<< HEAD
   }, [allAirspaces, isPanelOpen])
 
   // Memoize popup position to prevent flickering when elevation data loads
@@ -1276,12 +1426,47 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
 
         {/* Basemap Layer - selected from dropdown */}
         {selectedBasemap === 'openstreetmap' && (
+=======
+    
+    // Always include the end marker
+    if (markers.length === 0 || markers[markers.length - 1].distance < routeLength) {
+      const endPoint = completedRoute[completedRoute.length - 1]
+      markers.push({ distance: Math.round(routeLength), lat: endPoint.lat, lon: endPoint.lon })
+    }
+    
+    return markers
+  }, [completedRoute])
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
+      <MapContainer
+        center={[56.0, -106.0]}
+        zoom={5}
+        style={{ height: '100%', width: '100%' }}
+      >
+        {selectedBasemap === 'topographic' && (
+          <TileLayer
+            attribution='Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)'
+            url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
+            maxZoom={17}
+          />
+        )}
+        {selectedBasemap === 'satellite' && (
+          <TileLayer
+            attribution='&copy; <a href="https://www.esri.com/">Esri</a> &copy; <a href="https://www.esri.com/">Esri</a>'
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            maxZoom={19}
+          />
+        )}
+        {selectedBasemap === 'street' && (
+>>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             maxZoom={19}
           />
         )}
+<<<<<<< HEAD
         {selectedBasemap === 'osm-humanitarian' && (
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, Tiles style by <a href="https://www.hotosm.org/">HOT</a>'
@@ -1609,10 +1794,21 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
                   </button>
 
                 </div>
+=======
+        
+        <MapClickHandler onMapClick={handleMapClick} />
+        
+        {clickedPoint && (
+          <Marker position={[clickedPoint.lat, clickedPoint.lon]}>
+            <Popup>
+              <div>
+                <button onClick={startRouteDrawing}>Start Drawing Route</button>
+>>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
               </div>
-            )}
-          </Popup>
+            </Popup>
+          </Marker>
         )}
+<<<<<<< HEAD
           </MapContainer>
         )}
       </div>
@@ -1629,24 +1825,263 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
             setSelectedRouteId(null)
           }
         }}
+=======
+        
+        {isDrawingRoute && routePolyline && (
+          <Polyline positions={routePolyline} color="blue" />
+        )}
+        
+        {isDrawingRoute && routeVertices.map((v, i) => (
+          <Circle key={i} center={[v.lat, v.lon]} radius={50} color="blue" />
+        ))}
+        
+        {routeCorridorPolygon && (
+          <Polygon positions={routeCorridorPolygon} color="green" fillOpacity={0.2} />
+        )}
+        
+        {/* Distance markers along the route */}
+        {routeDistanceMarkers.map((marker, idx) => {
+          const icon = new DivIcon({
+            className: 'distance-marker',
+            html: `<div style="
+              background-color: #3b82f6;
+              color: white;
+              border: 2px solid white;
+              border-radius: 50%;
+              width: 32px;
+              height: 32px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              font-weight: bold;
+              font-size: 11px;
+              box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            ">${marker.distance}</div>`,
+            iconSize: [32, 32],
+            iconAnchor: [16, 16]
+          })
+          
+          return (
+            <Marker
+              key={idx}
+              position={[marker.lat, marker.lon]}
+              icon={icon}
+            >
+              <Popup>
+                <div style={{ textAlign: 'center', fontWeight: 'bold', color: '#3b82f6', fontSize: '14px' }}>
+                  {marker.distance} km
+                </div>
+              </Popup>
+            </Marker>
+          )
+        })}
+        
+        {/* Render airspace polygons and circles */}
+        {layers.find(l => l.id === 'airspace')?.visible && initialData.map((airspace, idx) => {
+          const opacity = layers.find(l => l.id === 'airspace')?.opacity || 0.7
+          
+          // Get airspace color based on type
+          const getAirspaceColor = (type: string): string => {
+            const colors: Record<string, string> = {
+              'Class A': '#ff0000',
+              'Class B': '#ff00ff',
+              'Class C': '#ffff00',
+              'Class D': '#00ffff',
+              'Class E': '#00ff00',
+              'Class F': '#0000ff',
+              'Class G': '#808080',
+              'Restricted': '#ff8800',
+              'Prohibited': '#ff0000',
+              'Danger': '#ff4444',
+              'Warning': '#ffaa00',
+              'MOA': '#00ff88',
+              'Alert': '#ffaa00',
+            }
+            return colors[type] || '#64748b'
+          }
+          
+          const color = getAirspaceColor(airspace.type)
+          
+          // Render circle-based airspace
+          if (airspace.coordinates && airspace.radius !== undefined) {
+            const radiusMeters = airspace.radius * 1852 // Convert NM to meters
+            return (
+              <Circle
+                key={airspace.id || idx}
+                center={[airspace.coordinates.latitude, airspace.coordinates.longitude]}
+                radius={radiusMeters}
+                pathOptions={{
+                  color: color,
+                  fillColor: color,
+                  fillOpacity: opacity,
+                  weight: 2
+                }}
+              >
+                <Popup>
+                  <div>
+                    <strong>{airspace.type}</strong>
+                    {airspace.location && <div>{airspace.location}</div>}
+                    {airspace.altitude?.floor !== undefined && (
+                      <div>Floor: {Math.round(airspace.altitude.floor / 3.28084)}m</div>
+                    )}
+                    {airspace.altitude?.ceiling !== undefined && (
+                      <div>Ceiling: {Math.round(airspace.altitude.ceiling / 3.28084)}m</div>
+                    )}
+                  </div>
+                </Popup>
+              </Circle>
+            )
+          }
+          
+          // Render polygon-based airspace
+          if (airspace.polygon && airspace.polygon.length >= 3) {
+            const positions = airspace.polygon.map(p => [p.latitude, p.longitude] as LatLngExpression)
+            return (
+              <Polygon
+                key={airspace.id || idx}
+                positions={positions}
+                pathOptions={{
+                  color: color,
+                  fillColor: color,
+                  fillOpacity: opacity,
+                  weight: 2
+                }}
+              >
+                <Popup>
+                  <div>
+                    <strong>{airspace.type}</strong>
+                    {airspace.location && <div>{airspace.location}</div>}
+                    {airspace.altitude?.floor !== undefined && (
+                      <div>Floor: {Math.round(airspace.altitude.floor / 3.28084)}m</div>
+                    )}
+                    {airspace.altitude?.ceiling !== undefined && (
+                      <div>Ceiling: {Math.round(airspace.altitude.ceiling / 3.28084)}m</div>
+                    )}
+                  </div>
+                </Popup>
+              </Polygon>
+            )
+          }
+          
+          return null
+        })}
+      </MapContainer>
+
+      {isDrawingRoute && (
+        <div
+                    style={{
+            position: 'absolute',
+            top: '10px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            backgroundColor: 'white',
+            padding: '12px',
+            borderRadius: '8px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            zIndex: 1000,
+            display: 'flex',
+            gap: '8px',
+            alignItems: 'center'
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button onClick={undoRouteVertex} disabled={routeVertices.length === 0 || isRouteLoading}>
+            Undo
+          </button>
+          <label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".gpx,.igc"
+              onChange={handleRouteFileImport}
+              style={{ display: 'none' }}
+            />
+            <button onClick={() => fileInputRef.current?.click()} disabled={isRouteLoading}>
+              Import
+            </button>
+          </label>
+          <input
+            type="number"
+            value={routeRadius}
+            onChange={(e) => setRouteRadius(parseFloat(e.target.value) || fetchRadius)}
+            min="0.5"
+            max="25"
+            step="0.5"
+                    style={{
+              width: '80px',
+              padding: '4px 8px',
+              fontSize: '14px',
+              textAlign: 'center',
+              border: '1px solid #ccc',
+              borderRadius: '4px'
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          />
+          <span>km</span>
+          <button onClick={finishRouteDrawing} disabled={routeVertices.length < 2 || isRouteLoading}>
+            Finish
+          </button>
+          <button onClick={cancelRouteDrawing} disabled={isRouteLoading}>
+            Cancel
+                  </button>
+                </div>
+      )}
+
+      {isRouteLoading && (
+        <>
+          <style>{`
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}</style>
+          <div
+            style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              backgroundColor: 'rgba(0,0,0,0.7)',
+              color: 'white',
+              padding: '20px',
+              borderRadius: '8px',
+              zIndex: 2000,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '12px'
+            }}
+          >
+            <div className="spinner" style={{
+              border: '4px solid #f3f3f3',
+              borderTop: '4px solid #3498db',
+              borderRadius: '50%',
+              width: '40px',
+              height: '40px',
+              animation: 'spin 1s linear infinite'
+            }} />
+            <div>Processing route...</div>
+              </div>
+        </>
+            )}
+
+      <SidePanel
+        isOpen={isSidePanelOpen}
+        onToggle={() => setIsSidePanelOpen(!isSidePanelOpen)}
+>>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
         layers={layers}
         onLayerToggle={handleLayerToggle}
         onLayerOpacityChange={handleLayerOpacityChange}
         basemapOptions={basemapOptions}
         selectedBasemap={selectedBasemap}
-        onBasemapChange={setSelectedBasemap}
-        onFileUpload={handleFileUpload}
-        allAirspaceData={allAirspaceData}
-        selectedAirspaceId={selectedAirspaceId}
-        onAirspaceSelect={handleAirspaceSelect}
-        onSearchLocation={handleSearchLocation}
-        currentFiles={currentFiles}
-        airspaceTypes={allTypes}
-        visibleTypes={visibleTypes}
-        onTypeToggle={handleTypeToggle}
+        onBasemapChange={handleBasemapChange}
         clickedPoint={clickedPoint}
+        allAirspaceData={[{ id: 'default', name: 'Default', data: initialData }]}
         fetchRadius={fetchRadius}
         onFetchRadiusChange={setFetchRadius}
+<<<<<<< HEAD
         onElevationCellsChange={(cells, minElev, maxElev) => {
           setElevationCells(cells)
           setElevationRange({ min: minElev, max: maxElev })
@@ -1774,6 +2209,12 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
       {/* Terrain Profile is now displayed in the side panel air column tab */}
 
 
+=======
+        route={completedRoute}
+        routeCorridor={routeCorridor}
+        routeRadius={routeRadius}
+      />
+>>>>>>> e3b0f772e81e335bfddd7a801fd995cdb63f9b6c
     </div>
   )
 }
