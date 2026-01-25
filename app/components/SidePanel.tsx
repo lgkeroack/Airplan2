@@ -1,20 +1,48 @@
 'use client'
 
-import { useState, useRef, useMemo, useEffect } from 'react'
+import { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 import type { AirspaceData } from '@/lib/types'
-import { findAirspacesAtPoint, findAirspacesNearby, findAirspacesInPolygon } from '@/lib/point-in-airspace'
+import { findAirspacesAtPoint, findAirspacesNearby } from '@/lib/point-in-airspace'
 import dynamic from 'next/dynamic'
 import type { ElevationCellData } from './AirspaceCylinder'
-import type { PolygonVertex } from './AirspacePolygon'
 
 const AirspaceCylinder = dynamic(() => import('./AirspaceCylinder'), { ssr: false })
-const AirspacePolygon = dynamic(() => import('./AirspacePolygon'), { ssr: false })
+const RouteTerrainProfile = dynamic(() => import('./RouteTerrainProfile'), { ssr: false })
+const TerrainProfile3D = dynamic(() => import('./RouteTerrainProfileCanvas.client'), {
+  ssr: false,
+  loading: () => <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading 3D…</div>
+})
+
+// Format date string for display (compact format)
+function formatAirspaceDate(dateStr: string | undefined): string | null {
+  if (!dateStr) return null
+  try {
+    const date = new Date(dateStr)
+    if (isNaN(date.getTime())) return null
+    const month = date.toLocaleDateString('en-US', { month: 'short' })
+    const day = date.getDate()
+    const year = date.getFullYear()
+    const now = new Date()
+    if (year === now.getFullYear()) {
+      return `${month} ${day}`
+    }
+    return `${month} ${day}, ${year}`
+  } catch {
+    return null
+  }
+}
 
 interface Layer {
   id: string
   name: string
   visible: boolean
   opacity: number
+}
+
+interface RouteData {
+  id: string
+  points: Array<{ lat: number; lon: number }>
+  terrainProfileWidth: number
 }
 
 interface SidePanelProps {
@@ -40,7 +68,8 @@ interface SidePanelProps {
   fetchRadius?: number
   onFetchRadiusChange?: (radius: number) => void
   onElevationCellsChange?: (cells: ElevationCellData[], minElev: number, maxElev: number) => void
-  activePolygon?: PolygonVertex[] | null
+  selectedRoute?: RouteData
+  activeTab?: 'layers' | 'files' | 'aircolumn' | 'search' | 'settings'
 }
 
 export default function SidePanel({
@@ -66,15 +95,20 @@ export default function SidePanel({
   fetchRadius: fetchRadiusProp = 1,
   onFetchRadiusChange,
   onElevationCellsChange,
-  activePolygon,
+  selectedRoute,
+  activeTab: activeTabProp,
 }: SidePanelProps) {
-  const [activeTab, setActiveTab] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings'>('layers')
-  const [activeTabState, setActiveTabState] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings'>('layers')
-  // Ensure strict state for activeTab to avoid layout shifts
-  useEffect(() => { setActiveTabState(activeTab) }, [activeTab])
+  const [activeTab, setActiveTab] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings' | undefined>(activeTabProp)
+  const [activeTabState, setActiveTabState] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings' | undefined>(activeTabProp)
+  
+  // Update activeTab when prop changes
+  useEffect(() => { 
+    setActiveTab(activeTabProp)
+    setActiveTabState(activeTabProp)
+  }, [activeTabProp])
 
   const [searchHistory, setSearchHistory] = useState<string[]>([])
-  
+
   // Use prop value for fetchRadius, with local state as fallback
   const fetchRadius = fetchRadiusProp
   const setFetchRadius = (value: number) => {
@@ -90,6 +124,36 @@ export default function SidePanel({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isMobile, setIsMobile] = useState(false)
   const [is3DExpanded, setIs3DExpanded] = useState(false)
+  const [isTerrain3DExpanded, setIsTerrain3DExpanded] = useState(false)
+  
+  // Extended airspace data with position info along route
+  interface PositionedAirspace extends AirspaceData {
+    startProgress: number
+    endProgress: number
+  }
+  
+  // State for 3D terrain profile data
+  const [terrain3DData, setTerrain3DData] = useState<{
+    cells: Array<{ lat: number; lon: number; elevation: number | null; distanceFromPath: number; progressAlongPath: number }>;
+    minElev: number;
+    maxElev: number;
+    airspaces: PositionedAirspace[];
+    routeBearing: number;
+    totalDistanceKm: number;
+  }>({ cells: [], minElev: 0, maxElev: 100, airspaces: [], routeBearing: 0, totalDistanceKm: 0 })
+  
+  // Memoized callback to prevent infinite re-renders
+  const handleElevationDataChange = useCallback((
+    cells: Array<{ lat: number; lon: number; elevation: number | null; distanceFromPath: number; progressAlongPath: number }>, 
+    minElev: number, 
+    maxElev: number, 
+    airspaces: PositionedAirspace[],
+    routeBearing: number = 0,
+    totalDistanceKm: number = 0
+  ) => {
+    setTerrain3DData({ cells, minElev, maxElev, airspaces, routeBearing, totalDistanceKm })
+  }, [])
+  // Always show terrain profile for selected route
 
   // Handle responsive layout
   useEffect(() => {
@@ -134,7 +198,7 @@ export default function SidePanel({
 
     console.log('[SidePanel] Searching for airspaces at', clickedPoint, 'with radius', fetchRadius, 'km')
     console.log('[SidePanel] Total airspaces to search:', allAirspaces.length)
-    
+
     const found = findAirspacesNearby({ latitude: clickedPoint.lat, longitude: clickedPoint.lon }, fetchRadius, allAirspaces)
       .sort((a, b) => {
         // Sort by altitude floor (lowest first)
@@ -142,42 +206,16 @@ export default function SidePanel({
         const bFloor = b.altitude?.floor || 0
         return aFloor - bFloor
       })
-    
+
     console.log('[SidePanel] Found', found.length, 'airspaces nearby')
     found.forEach((a, i) => {
       console.log(`  [${i}] ${a.type} (${a.id}): floor=${a.altitude?.floor}, ceiling=${a.altitude?.ceiling}`)
     })
-    
+
     return found
   }, [clickedPoint, allAirspaceData, fetchRadius])
 
-  // Find airspaces that intersect with the polygon
-  const airspacesInPolygon = useMemo(() => {
-    if (!activePolygon || activePolygon.length < 3) return []
 
-    const allAirspaces: AirspaceData[] = []
-    allAirspaceData.forEach(source => {
-      allAirspaces.push(...source.data)
-    })
-
-    console.log('[SidePanel] Searching for airspaces in polygon with', activePolygon.length, 'vertices')
-    console.log('[SidePanel] Total airspaces to search:', allAirspaces.length)
-    
-    const found = findAirspacesInPolygon(activePolygon, allAirspaces)
-      .sort((a, b) => {
-        // Sort by altitude floor (lowest first)
-        const aFloor = a.altitude?.floor || 0
-        const bFloor = b.altitude?.floor || 0
-        return aFloor - bFloor
-      })
-    
-    console.log('[SidePanel] Found', found.length, 'airspaces in polygon')
-    found.forEach((a, i) => {
-      console.log(`  [${i}] ${a.type} (${a.id}): floor=${a.altitude?.floor}, ceiling=${a.altitude?.ceiling}`)
-    })
-    
-    return found
-  }, [activePolygon, allAirspaceData])
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -315,12 +353,118 @@ export default function SidePanel({
         </div>
       )}
 
-      {/* Main Side Navigation Container */}
+      {/* Navigation Column - Always Visible (64px) */}
       <div
         style={{
           position: 'fixed',
           top: 0,
           right: 0,
+          width: '64px',
+          height: '100vh',
+          backgroundColor: 'white',
+          borderLeft: '1px solid #e5e7eb',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          padding: '20px 0',
+          gap: '12px',
+          boxShadow: isOpen ? 'none' : '-2px 0 8px rgba(0,0,0,0.05)',
+          zIndex: 1001,
+          fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif"
+        }}
+      >
+        {/* Hamburger / Toggle */}
+        <button
+          onClick={onToggle}
+          style={{
+            width: '40px',
+            height: '40px',
+            borderRadius: '8px',
+            border: 'none',
+            backgroundColor: 'transparent',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#374151',
+            transition: 'background-color 0.2s',
+            marginBottom: '20px'
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+          title={isOpen ? "Collapse Menu" : "Expand Menu"}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+
+        {/* Navigation Items */}
+        {[
+          { id: 'search', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z', label: 'Search' },
+          { id: 'layers', icon: 'M12 2L2 7l10 5l10-5l-10-5z M2 17l10 5l10-5 M2 12l10 5l10-5', label: 'Layers' },
+          { id: 'files', icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8', label: 'Files' },
+          { id: 'aircolumn', icon: 'M18 20V10 M12 20V4 M6 20v-6', label: 'Air Column' },
+          { id: 'settings', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 0v.01M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z', label: 'Settings' }
+        ].map((item) => (
+          <button
+            key={item.id}
+            onClick={() => {
+              if (activeTab === item.id && isOpen) {
+                onToggle() // Close if clicking active tab
+              } else {
+                setActiveTab(item.id as any)
+                if (!isOpen) onToggle() // Open if closed
+              }
+            }}
+            style={{
+              width: '44px',
+              height: '44px',
+              borderRadius: '10px',
+              border: 'none',
+              backgroundColor: activeTab === item.id && isOpen ? '#eff6ff' : 'transparent',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: activeTab === item.id && isOpen ? '#3b82f6' : '#6b7280',
+              transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+              position: 'relative'
+            }}
+            onMouseEnter={(e) => {
+              if (!(activeTab === item.id && isOpen)) e.currentTarget.style.backgroundColor = '#f9fafb'
+            }}
+            onMouseLeave={(e) => {
+              if (!(activeTab === item.id && isOpen)) e.currentTarget.style.backgroundColor = 'transparent'
+            }}
+            title={item.label}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d={item.icon} />
+            </svg>
+            {activeTab === item.id && isOpen && (
+              <div style={{
+                position: 'absolute',
+                right: '-1px',
+                top: '12px',
+                bottom: '12px',
+                width: '3px',
+                backgroundColor: '#3b82f6',
+                borderRadius: '3px 0 0 3px'
+              }} />
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Main Side Navigation Container */}
+      <div
+        style={{
+          position: 'fixed',
+          top: 0,
+          right: 64,
           height: '100vh',
           display: 'flex',
           zIndex: 1000,
@@ -330,13 +474,13 @@ export default function SidePanel({
         {/* Content Panel (Expands to the left) */}
         <div
           style={{
-            width: isOpen ? (isMobile ? '100%' : '400px') : '0',
+            width: isOpen ? (isMobile ? 'calc(100vw - 64px)' : '400px') : '0',
             backgroundColor: 'white',
             height: isMobile ? (isOpen ? '50vh' : '0') : '100%',
             position: isMobile ? 'fixed' : 'relative',
             bottom: isMobile ? 0 : 'auto',
             left: isMobile ? 0 : 'auto',
-            right: 0,
+            right: isMobile ? 0 : 'auto',
             overflowX: 'hidden',
             overflowY: 'auto',
             transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -350,7 +494,7 @@ export default function SidePanel({
           {isOpen && (
             <div style={{ width: isMobile ? '100%' : '400px', flex: 1, display: 'flex', flexDirection: 'column' }}>
               {/* Content Header */}
-              <div style={{ padding: '24px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ padding: '24px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, backgroundColor: '#ffffff', zIndex: 1000 }}>
                 <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.02em', color: '#111827' }}>
                   {activeTab === 'layers' ? 'Map Layers' : activeTab === 'files' ? 'Airspace Files' : activeTab === 'search' ? 'Search' : activeTab === 'settings' ? 'Settings' : 'Air Column'}
                 </h2>
@@ -385,10 +529,10 @@ export default function SidePanel({
                   <div>
                     {/* Basemap Selection Dropdown */}
                     <div style={{ marginBottom: '20px' }}>
-                      <label style={{ 
-                        display: 'block', 
-                        fontSize: '14px', 
-                        fontWeight: '600', 
+                      <label style={{
+                        display: 'block',
+                        fontSize: '14px',
+                        fontWeight: '600',
                         color: '#374151',
                         marginBottom: '8px'
                       }}>
@@ -419,10 +563,10 @@ export default function SidePanel({
 
                     {/* Overlay Layers */}
                     <div style={{ marginBottom: '16px' }}>
-                      <label style={{ 
-                        display: 'block', 
-                        fontSize: '14px', 
-                        fontWeight: '600', 
+                      <label style={{
+                        display: 'block',
+                        fontSize: '14px',
+                        fontWeight: '600',
                         color: '#374151',
                         marginBottom: '12px'
                       }}>
@@ -778,38 +922,70 @@ export default function SidePanel({
 
                 {activeTab === 'settings' && (
                   <div>
-                      <div style={{ textAlign: 'left', padding: '16px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                          <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>
-                            Fetch Radius
-                          </label>
-                          <span style={{ fontSize: '12px', fontWeight: '500', color: '#6b7280', backgroundColor: '#e5e7eb', padding: '2px 6px', borderRadius: '4px' }}>
-                            {fetchRadius} km
-                          </span>
-                        </div>
-                        <input
-                          type="range"
-                          min="1"
-                          max="25"
-                          step="0.5"
-                          value={fetchRadius}
-                          onChange={(e) => setFetchRadius(parseFloat(e.target.value))}
-                          style={{
-                            width: '100%',
-                            accentColor: '#3b82f6',
-                            cursor: 'pointer'
-                          }}
-                        />
-                        <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '6px' }}>
-                          Search radius for finding nearby airspaces (1-25 km).
-                        </p>
+                    <div style={{ textAlign: 'left', padding: '16px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                          Fetch Radius
+                        </label>
+                        <span style={{ fontSize: '12px', fontWeight: '500', color: '#6b7280', backgroundColor: '#e5e7eb', padding: '2px 6px', borderRadius: '4px' }}>
+                          {fetchRadius} km
+                        </span>
                       </div>
+                      <input
+                        type="range"
+                        min="1"
+                        max="25"
+                        step="0.5"
+                        value={fetchRadius}
+                        onChange={(e) => setFetchRadius(parseFloat(e.target.value))}
+                        style={{
+                          width: '100%',
+                          accentColor: '#3b82f6',
+                          cursor: 'pointer'
+                        }}
+                      />
+                      <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '6px' }}>
+                        Search radius for finding nearby airspaces (1-25 km).
+                      </p>
+                    </div>
                   </div>
                 )}
 
                 {activeTab === 'aircolumn' && (
                   <div>
-                    {clickedPoint ? (
+                    {selectedRoute ? (
+                      <div style={{ border: '4px solid yellow', boxShadow: '0 0 10px yellow', borderRadius: '8px', padding: '12px' }}>
+                        <div style={{ marginBottom: '16px', fontSize: '14px', color: '#6b7280' }}>
+                          <div><strong>Route Airspace & Terrain</strong></div>
+                        </div>
+                        <RouteTerrainProfile
+                          points={selectedRoute.points}
+                          width={selectedRoute.terrainProfileWidth}
+                          onClose={() => {}}
+                          onWidthChange={() => {}}
+                          embedded={true}
+                          airspaceData={allAirspaceData.flatMap(source => source.data)}
+                          onElevationDataChange={handleElevationDataChange}
+                        />
+                        
+                        {/* Render the 3D profile directly here to guarantee client-only context */}
+                        {terrain3DData.cells.length > 0 && (
+                          <div style={{ marginTop: '16px' }}>
+                            <TerrainProfile3D
+                              cells={terrain3DData.cells}
+                              minElev={terrain3DData.minElev}
+                              maxElev={terrain3DData.maxElev}
+                              width={selectedRoute.terrainProfileWidth}
+                              airspaces={terrain3DData.airspaces}
+                              routeBearing={terrain3DData.routeBearing}
+                              totalDistanceKm={terrain3DData.totalDistanceKm}
+                              isExpanded={isTerrain3DExpanded}
+                              onToggleExpand={() => setIsTerrain3DExpanded(!isTerrain3DExpanded)}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ) : clickedPoint ? (
                       <>
                         <div style={{ marginBottom: '16px', fontSize: '14px', color: '#6b7280' }}>
                           <div><strong>Location:</strong> {clickedPoint.lat.toFixed(6)}, {clickedPoint.lon.toFixed(6)}</div>
@@ -920,7 +1096,7 @@ export default function SidePanel({
                             }
 
                             return (
-                              <div style={{ position: 'relative', height: '500px', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', backgroundColor: '#f9fafb', fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif" }}>
+                              <div style={{ position: 'relative', height: '500px', borderRadius: '8px', padding: '16px', backgroundColor: '#f9fafb', fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif" }}>
                                 {/* Altitude scale */}
                                 <div style={{ position: 'absolute', left: '0', top: '16px', bottom: '16px', width: isMobile ? '70px' : '110px', color: '#6b7280' }}>
                                   {/* Central Vertical Line - Only on desktop */}
@@ -985,29 +1161,48 @@ export default function SidePanel({
                                       </div>
                                     )
                                   })}
-                                </div>
-
-                                {/* Airspace bars */}
-                                <div style={{ marginLeft: isMobile ? '70px' : '120px', position: 'relative', height: '100%' }}>
-                                  {/* Ground visualization */}
+                                  
+                                  {/* Ground level indicator on elevation bar */}
                                   {elevation !== null && (
                                     <div style={{
                                       position: 'absolute',
                                       bottom: '0',
-                                      left: '0',
-                                      right: '0',
+                                      left: isMobile ? '50%' : '52px',
+                                      transform: isMobile ? 'translateX(-50%)' : 'none',
+                                      width: '8px',
                                       height: `${(elevation / altRange) * 100}%`,
-                                      backgroundColor: '#d1d5db',
-                                      opacity: 0.4,
-                                      borderTop: '2px dashed #9ca3af',
-                                      zIndex: 1
+                                      backgroundColor: '#9ca3af',
+                                      opacity: 0.6,
+                                      borderTop: '2px solid #6b7280',
+                                      borderRadius: '0 0 2px 2px'
                                     }}>
-                                      <div style={{ position: 'absolute', top: '-18px', right: '4px', fontSize: '10px', color: '#6b7280', fontWeight: '600' }}>
-                                        Ground: {Math.round(elevation)}ft ({ftToM(elevation)}m)
+                                      <div style={{ 
+                                        position: 'absolute', 
+                                        bottom: '100%',
+                                        marginBottom: '4px',
+                                        left: '50%',
+                                        transform: 'translateX(-50%)',
+                                        fontSize: '8px', 
+                                        color: '#4a5568', 
+                                        fontWeight: '600',
+                                        whiteSpace: 'nowrap',
+                                        backgroundColor: '#ffffff',
+                                        padding: '2px 4px',
+                                        borderRadius: '2px',
+                                        border: '1px solid #9ca3af',
+                                        textAlign: 'center',
+                                        lineHeight: '1.3',
+                                        zIndex: 10
+                                      }}>
+                                        <div>Ground level</div>
+                                        <div>{Math.round(elevation)}ft {ftToM(elevation)}m</div>
                                       </div>
                                     </div>
                                   )}
+                                </div>
 
+                                {/* Airspace bars */}
+                                <div style={{ marginLeft: isMobile ? '70px' : '120px', position: 'relative', height: '100%' }}>
                                   {(() => {
                                     const renderedAltitudes = new Set<number>()
                                     const labelsToRender: Array<{
@@ -1042,6 +1237,16 @@ export default function SidePanel({
                                         ? ((airspace as any).isGrouped ? (airspace as any).group.ids.every((id: string) => selectedAirspaceId.includes(id)) : selectedAirspaceId.includes(airspace.id))
                                         : selectedAirspaceId === airspace.id
 
+                                      // Format date range for display
+                                      const startDate = formatAirspaceDate(airspace.effectiveStart)
+                                      const endDate = formatAirspaceDate(airspace.effectiveEnd)
+                                      const dateRange = startDate || endDate
+                                        ? `${startDate || '?'} → ${endDate || '?'}`
+                                        : null
+                                      const titleWithDates = dateRange
+                                        ? `${airspace.type}: ${airspace.notamNumber}\n${floor} - ${ceiling} ft\nEffective: ${dateRange}`
+                                        : `${airspace.type}: ${airspace.notamNumber}\n${floor} - ${ceiling} ft`
+
                                       return (
                                         <div
                                           key={airspace.id}
@@ -1069,7 +1274,7 @@ export default function SidePanel({
                                             transition: 'all 0.2s ease',
                                             boxShadow: isSelected ? '0 0 10px rgba(250, 204, 21, 0.5)' : 'none'
                                           }}
-                                          title={`${airspace.type}: ${airspace.notamNumber}\n${floor} - ${ceiling} ft`}
+                                          title={titleWithDates}
                                         >
                                           <div style={{ textAlign: 'center', overflow: 'hidden' }}>
                                             <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1077,6 +1282,9 @@ export default function SidePanel({
                                             </div>
                                             {heightPercent > 8 && (
                                               <div style={{ fontSize: '8px', opacity: 0.9 }}>{floor}-{ceiling}</div>
+                                            )}
+                                            {dateRange && heightPercent > 15 && (
+                                              <div style={{ fontSize: '7px', opacity: 0.85, marginTop: '1px' }}>{dateRange}</div>
                                             )}
                                           </div>
                                         </div>
@@ -1132,156 +1340,31 @@ export default function SidePanel({
                           </div>
                         )}
 
-                        {/* 3D Visualization */}
-                        <AirspaceCylinder 
-                          clickedPoint={clickedPoint} 
-                          radiusKm={fetchRadius} 
+                        {/* 3D Visualization - always show cylinder when a point is clicked and airspaces are found */}
+                        <AirspaceCylinder
+                          clickedPoint={clickedPoint}
+                          radiusKm={fetchRadius}
                           onElevationCellsChange={onElevationCellsChange}
                           hasAirspace={airspacesAtPoint.length > 0}
                           airspacesAtPoint={airspacesAtPoint}
                           isExpanded={is3DExpanded}
                           onToggleExpand={() => setIs3DExpanded(!is3DExpanded)}
-                        />
-                      </>
-                    ) : activePolygon && activePolygon.length >= 3 ? (
-                      <>
-                        <div style={{ 
-                          padding: '16px', 
-                          backgroundColor: '#fef2f2', 
-                          borderRadius: '8px', 
-                          marginBottom: '16px',
-                          border: '1px solid #fecaca'
-                        }}>
-                          <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#991b1b', marginBottom: '4px' }}>
-                            Custom Polygon
-                          </div>
-                          <div style={{ fontSize: '12px', color: '#b91c1c' }}>
-                            {activePolygon.length} vertices
-                          </div>
-                        </div>
-                        
-                        {/* 3D Polygon Visualization */}
-                        <AirspacePolygon 
-                          vertices={activePolygon}
-                          airspacesInPolygon={airspacesInPolygon}
-                          isExpanded={is3DExpanded}
-                          onToggleExpand={() => setIs3DExpanded(!is3DExpanded)}
+                          selectedBasemap={selectedBasemap}
                         />
                       </>
                     ) : (
                       <div style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>
-                        Click on the map to view air column
+                        {selectedRoute ? 'Loading route data...' : 'Click on the map to view air column or draw a route'}
                       </div>
                     )}
                   </div>
                 )}
               </div>
+
             </div>
           )}
         </div>
-
-        {/* Navigation Column (64px) - Persistent on right */}
-        <div
-          style={{
-            width: '64px',
-            backgroundColor: 'white',
-            height: '100%',
-            borderLeft: '1px solid #e5e7eb',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            padding: '20px 0',
-            gap: '12px',
-            boxShadow: isOpen ? 'none' : '-2px 0 8px rgba(0,0,0,0.05)',
-          }}
-        >
-          {/* Hamburger / Toggle */}
-          <button
-            onClick={onToggle}
-            style={{
-              width: '40px',
-              height: '40px',
-              borderRadius: '8px',
-              border: 'none',
-              backgroundColor: 'transparent',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#374151',
-              transition: 'background-color 0.2s',
-              marginBottom: '20px'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-            title={isOpen ? "Collapse Menu" : "Expand Menu"}
-          >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="3" y1="12" x2="21" y2="12" />
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <line x1="3" y1="18" x2="21" y2="18" />
-            </svg>
-          </button>
-
-          {/* Navigation Items */}
-          {[
-            { id: 'search', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z', label: 'Search' },
-            { id: 'layers', icon: 'M12 2L2 7l10 5l10-5l-10-5z M2 17l10 5l10-5 M2 12l10 5l10-5', label: 'Layers' },
-            { id: 'files', icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8', label: 'Files' },
-            { id: 'aircolumn', icon: 'M18 20V10 M12 20V4 M6 20v-6', label: 'Air Column' },
-            { id: 'settings', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 0v.01M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z', label: 'Settings' }
-          ].map((item) => (
-            <button
-              key={item.id}
-              onClick={() => {
-                if (activeTab === item.id && isOpen) {
-                  onToggle() // Close if clicking active tab
-                } else {
-                  setActiveTab(item.id as any)
-                  if (!isOpen) onToggle() // Open if closed
-                }
-              }}
-              style={{
-                width: '44px',
-                height: '44px',
-                borderRadius: '10px',
-                border: 'none',
-                backgroundColor: activeTab === item.id && isOpen ? '#eff6ff' : 'transparent',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: activeTab === item.id && isOpen ? '#3b82f6' : '#6b7280',
-                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                position: 'relative'
-              }}
-              onMouseEnter={(e) => {
-                if (!(activeTab === item.id && isOpen)) e.currentTarget.style.backgroundColor = '#f9fafb'
-              }}
-              onMouseLeave={(e) => {
-                if (!(activeTab === item.id && isOpen)) e.currentTarget.style.backgroundColor = 'transparent'
-              }}
-              title={item.label}
-            >
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d={item.icon} />
-              </svg>
-              {activeTab === item.id && isOpen && (
-                <div style={{
-                  position: 'absolute',
-                  right: '-1px',
-                  top: '12px',
-                  bottom: '12px',
-                  width: '3px',
-                  backgroundColor: '#3b82f6',
-                  borderRadius: '3px 0 0 3px'
-                }} />
-              )}
-            </button>
-          ))}
-        </div>
-      </div >
+      </div>
     </>
   )
 }
-

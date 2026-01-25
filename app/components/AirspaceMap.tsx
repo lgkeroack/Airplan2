@@ -3,11 +3,16 @@
 import { MapContainer, TileLayer, Circle, Polygon, Popup, useMap, useMapEvents } from 'react-leaflet'
 import L, { LatLngExpression, Map as LeafletMap } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
+import React, { useEffect, useState, useRef, useMemo, useCallback, useId } from 'react'
 import SidePanel from './SidePanel'
+import { findAirspacesAtPoint, findAirspacesNearby } from '@/lib/point-in-airspace'
+
+import dynamic from 'next/dynamic'
+import RouteBuilderUI from './RouteBuilderUI'
 import type { AirspaceData } from '@/lib/types'
 import { validateOpenAirFile } from '@/lib/validate-openair'
-import { findAirspacesAtPoint } from '@/lib/point-in-airspace'
+
+const RouteOverlay = dynamic(() => import('./RouteOverlay'), { ssr: false })
 import type { ElevationCellData } from './AirspaceCylinder'
 
 
@@ -19,49 +24,102 @@ interface Layer {
 }
 
 // Check if two line segments intersect (for self-intersection detection)
-function segmentsIntersect(
-  p1: { lat: number; lon: number },
-  p2: { lat: number; lon: number },
-  p3: { lat: number; lon: number },
-  p4: { lat: number; lon: number }
-): boolean {
-  const ccw = (A: { lat: number; lon: number }, B: { lat: number; lon: number }, C: { lat: number; lon: number }) => {
-    return (C.lon - A.lon) * (B.lat - A.lat) > (B.lon - A.lon) * (C.lat - A.lat)
-  }
-  return ccw(p1, p3, p4) !== ccw(p2, p3, p4) && ccw(p1, p2, p3) !== ccw(p1, p2, p4)
+
+
+export interface RoutePoint {
+  id: string
+  lat: number
+  lon: number
+  ele?: number
 }
 
-// Check if a polygon has self-intersections
-function hasSelfintersection(vertices: Array<{ lat: number; lon: number }>): boolean {
-  if (vertices.length < 4) return false
-  
-  for (let i = 0; i < vertices.length; i++) {
-    const p1 = vertices[i]
-    const p2 = vertices[(i + 1) % vertices.length]
-    
-    for (let j = i + 2; j < vertices.length; j++) {
-      // Skip adjacent segments
-      if (j === vertices.length - 1 && i === 0) continue
-      
-      const p3 = vertices[j]
-      const p4 = vertices[(j + 1) % vertices.length]
-      
-      if (segmentsIntersect(p1, p2, p3, p4)) {
-        return true
-      }
+// Calculate distance between two points in meters
+function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371e3 // metres
+  const φ1 = lat1 * Math.PI / 180
+  const φ2 = lat2 * Math.PI / 180
+  const Δφ = (lat2 - lat1) * Math.PI / 180
+  const Δλ = (lon2 - lon1) * Math.PI / 180
+
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) *
+    Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+
+  return R * c
+}
+
+// Calculate bearing between two points in radians
+function getBearingRadians(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const φ1 = lat1 * Math.PI / 180
+  const φ2 = lat2 * Math.PI / 180
+  const Δλ = (lon2 - lon1) * Math.PI / 180
+
+  const y = Math.sin(Δλ) * Math.cos(φ2)
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ)
+  return Math.atan2(y, x)
+}
+
+// Calculate point at bearing and distance from start point
+function calculateDestinationPoint(lat: number, lon: number, bearing: number, distanceKm: number) {
+  const R = 6371 // km
+  const φ1 = lat * Math.PI / 180
+  const λ1 = lon * Math.PI / 180
+  const d = distanceKm / R
+
+  const φ2 = Math.asin(Math.sin(φ1) * Math.cos(d) +
+    Math.cos(φ1) * Math.sin(d) * Math.cos(bearing))
+  const λ2 = λ1 + Math.atan2(Math.sin(bearing) * Math.sin(d) * Math.cos(φ1),
+    Math.cos(d) - Math.sin(φ1) * Math.sin(φ2))
+
+  return {
+    lat: φ2 * 180 / Math.PI,
+    lon: λ2 * 180 / Math.PI
+  }
+}
+
+// Generate terrain corridor polygon for a route
+function generateTerrainCorridorPolygon(points: RoutePoint[], widthKm: number): [number, number][] {
+  if (points.length < 2) return []
+
+  const leftSide: { lat: number; lon: number }[] = []
+  const rightSide: { lat: number; lon: number }[] = []
+
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i]
+    let bearing: number
+
+    if (i === 0) {
+      // First point: use bearing to next point
+      bearing = getBearingRadians(p.lat, p.lon, points[i + 1].lat, points[i + 1].lon)
+    } else if (i === points.length - 1) {
+      // Last point: use bearing from previous point
+      bearing = getBearingRadians(points[i - 1].lat, points[i - 1].lon, p.lat, p.lon)
+    } else {
+      // Middle points: average bearing
+      const bearingIn = getBearingRadians(points[i - 1].lat, points[i - 1].lon, p.lat, p.lon)
+      const bearingOut = getBearingRadians(p.lat, p.lon, points[i + 1].lat, points[i + 1].lon)
+      // Average the bearings (handle wraparound)
+      const sinAvg = (Math.sin(bearingIn) + Math.sin(bearingOut)) / 2
+      const cosAvg = (Math.cos(bearingIn) + Math.cos(bearingOut)) / 2
+      bearing = Math.atan2(sinAvg, cosAvg)
     }
-  }
-  return false
-}
 
-// Calculate centroid of a polygon
-function getPolygonCentroid(vertices: Array<{ lat: number; lon: number }>): { lat: number; lon: number } {
-  let lat = 0, lon = 0
-  for (const v of vertices) {
-    lat += v.lat
-    lon += v.lon
+    // Calculate perpendicular points
+    const leftPoint = calculateDestinationPoint(p.lat, p.lon, bearing - Math.PI / 2, widthKm / 2)
+    const rightPoint = calculateDestinationPoint(p.lat, p.lon, bearing + Math.PI / 2, widthKm / 2)
+
+    leftSide.push(leftPoint)
+    rightSide.push(rightPoint)
   }
-  return { lat: lat / vertices.length, lon: lon / vertices.length }
+
+  // Build polygon: left side forward, then right side backward to close the polygon
+  const polygon: [number, number][] = [
+    ...leftSide.map(p => [p.lat, p.lon] as [number, number]),
+    ...rightSide.reverse().map(p => [p.lat, p.lon] as [number, number])
+  ]
+
+  return polygon
 }
 
 function MapInitializer({ center, zoom }: { center: LatLngExpression; zoom: number }) {
@@ -74,139 +132,7 @@ function MapInitializer({ center, zoom }: { center: LatLngExpression; zoom: numb
   return null
 }
 
-// Separate component for completed polygon popup (needs map context)
-function CompletedPolygonPopup({
-  position,
-  vertexCount,
-  onRetrieveAirspace,
-  onCancel
-}: {
-  position: LatLngExpression,
-  vertexCount: number,
-  onRetrieveAirspace: () => void,
-  onCancel: () => void
-}) {
-  const map = useMap()
-  
-  useEffect(() => {
-    // Ensure popup is properly initialized
-    return () => {
-      // Cleanup if needed
-    }
-  }, [map])
-  
-  return (
-    <Popup
-      position={position}
-      autoPan={false}
-      closeOnClick={false}
-      key={`polygon-popup-${position[0]}-${position[1]}`}
-    >
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '12px',
-          padding: '8px',
-          minWidth: '220px',
-          fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif",
-        }}>
-          <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>
-            Custom Polygon
-          </div>
-          <div style={{ fontSize: '12px', color: '#6b7280' }}>
-            {vertexCount} vertices
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <button
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                onRetrieveAirspace()
-              }}
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                backgroundColor: '#3b82f6',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                cursor: 'pointer',
-                textTransform: 'uppercase',
-                letterSpacing: '0.02em',
-                transition: 'background-color 0.2s'
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#2563eb'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#3b82f6'}
-            >
-              Retrieve airspace
-            </button>
-            <button
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                onCancel()
-              }}
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                backgroundColor: '#f3f4f6',
-                color: '#374151',
-                border: '1px solid #d1d5db',
-                borderRadius: '6px',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                cursor: 'pointer',
-                textTransform: 'uppercase',
-                letterSpacing: '0.02em',
-                transition: 'background-color 0.2s'
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#e5e7eb'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      </Popup>
-  )
-}
 
-// Separate component for completed polygon overlay
-const CompletedPolygonOverlay = React.memo(function CompletedPolygonOverlay({
-  positions,
-  popupPosition,
-  vertexCount,
-  onRetrieveAirspace,
-  onCancel
-}: {
-  positions: LatLngExpression[],
-  popupPosition: LatLngExpression,
-  vertexCount: number,
-  onRetrieveAirspace: () => void,
-  onCancel: () => void
-}) {
-  return (
-    <>
-      <Polygon
-        positions={positions}
-        pathOptions={{
-          color: '#ef4444',
-          fillColor: '#ef4444',
-          fillOpacity: 0.3,
-          weight: 3,
-        }}
-      />
-      <CompletedPolygonPopup
-        position={popupPosition}
-        vertexCount={vertexCount}
-        onRetrieveAirspace={onRetrieveAirspace}
-        onCancel={onCancel}
-      />
-    </>
-  )
-})
 
 // Separate component for map events to prevent re-renders of the event listeners
 function MapClickHandler({
@@ -216,20 +142,33 @@ function MapClickHandler({
   mapRef,
   onMouseMove,
   onMouseOut,
-  onDoubleClick
+  onDoubleClick,
+  isDrawingRoute
 }: {
-  onMapClick: (lat: number, lon: number) => void,
+  onMapClick: (lat: number, lon: number, event?: L.LeafletMouseEvent) => void,
   setMapBounds: (bounds: { north: number; south: number; east: number; west: number }) => void,
   boundsUpdateTimerRef: React.MutableRefObject<NodeJS.Timeout | null>,
   mapRef: React.MutableRefObject<LeafletMap | null>,
   onMouseMove?: (lat: number, lon: number) => void,
   onMouseOut?: () => void,
-  onDoubleClick?: () => void
+  onDoubleClick?: () => void,
+  isDrawingRoute?: boolean
 }) {
   const map = useMap()
 
   useEffect(() => {
     mapRef.current = map
+    // Ensure native Leaflet dragging is disabled; we'll handle panning manually
+    try {
+      map.dragging.disable()
+    } catch {}
+    
+    // Disable double-click zoom when drawing route
+    if (isDrawingRoute) {
+      map.doubleClickZoom.disable()
+    } else {
+      map.doubleClickZoom.enable()
+    }
 
     // Set initial bounds
     const bounds = map.getBounds()
@@ -242,22 +181,127 @@ function MapClickHandler({
 
     return () => {
       mapRef.current = null
+      // Re-enable on cleanup
+      if (map && isDrawingRoute) {
+        map.doubleClickZoom.enable()
+      }
     }
-  }, [map, mapRef, setMapBounds])
+  }, [map, mapRef, setMapBounds, isDrawingRoute])
 
+  // Track whether a drag occurred to prevent click events after dragging
+  const isDraggingRef = useRef(false)
+  const dragTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const hasDraggedRef = useRef(false)
+  const mouseDownPosRef = useRef<{ lat: number; lon: number } | null>(null)
+  const mouseMovedRef = useRef(false)
+  // Manual pan tracking using container pixel points
+  const manualDragActiveRef = useRef(false)
+  const lastContainerPointRef = useRef<L.Point | null>(null)
+  
   useMapEvents({
-    click: (e) => {
-      onMapClick(e.latlng.lat, e.latlng.lng)
-    },
-    dblclick: (e) => {
-      e.originalEvent.preventDefault()
-      onDoubleClick?.()
+    mousedown: (e) => {
+      // Reset drag tracking and record mouse down position
+      hasDraggedRef.current = false
+      mouseMovedRef.current = false
+      mouseDownPosRef.current = { lat: e.latlng.lat, lon: e.latlng.lng }
+      // Begin manual drag: record starting container point
+      manualDragActiveRef.current = true
+      lastContainerPointRef.current = map.latLngToContainerPoint(e.latlng)
     },
     mousemove: (e) => {
-      onMouseMove?.(e.latlng.lat, e.latlng.lng)
+      // Check if mouse moved significantly from mousedown position
+      if (mouseDownPosRef.current) {
+        const latDiff = Math.abs(e.latlng.lat - mouseDownPosRef.current.lat)
+        const lonDiff = Math.abs(e.latlng.lng - mouseDownPosRef.current.lon)
+        // If moved more than ~0.0001 degrees (about 10 meters), consider it a drag
+        if (latDiff > 0.0001 || lonDiff > 0.0001) {
+          mouseMovedRef.current = true
+        }
+      }
+      // Manual pan while dragging
+      if (manualDragActiveRef.current && lastContainerPointRef.current) {
+        const currentPt = map.latLngToContainerPoint(e.latlng)
+        const dx = currentPt.x - lastContainerPointRef.current.x
+        const dy = currentPt.y - lastContainerPointRef.current.y
+        if (Math.abs(dx) > 0 || Math.abs(dy) > 0) {
+          // Pan by the negative delta to move the map with the cursor
+          map.panBy(new L.Point(-dx, -dy), { animate: false })
+          lastContainerPointRef.current = currentPt
+          isDraggingRef.current = true
+          hasDraggedRef.current = true
+        }
+      }
+      if (onMouseMove) {
+        onMouseMove(e.latlng.lat, e.latlng.lng)
+      }
+    },
+    dragstart: () => {
+      // Mark that a drag is occurring
+      isDraggingRef.current = true
+      hasDraggedRef.current = true
+      mouseMovedRef.current = true
+      // Clear any pending timeout
+      if (dragTimeoutRef.current) {
+        clearTimeout(dragTimeoutRef.current)
+        dragTimeoutRef.current = null
+      }
+    },
+    drag: () => {
+      // Continuously mark as dragging during the drag
+      isDraggingRef.current = true
+      hasDraggedRef.current = true
+      mouseMovedRef.current = true
+    },
+    mouseup: () => {
+      // End manual drag on mouse up
+      manualDragActiveRef.current = false
+      lastContainerPointRef.current = null
+      // Keep drag flag set for longer to ensure click events don't fire
+      if (dragTimeoutRef.current) {
+        clearTimeout(dragTimeoutRef.current)
+      }
+      dragTimeoutRef.current = setTimeout(() => {
+        isDraggingRef.current = false
+        hasDraggedRef.current = false
+        mouseMovedRef.current = false
+        mouseDownPosRef.current = null
+        dragTimeoutRef.current = null
+      }, 300)
+    },
+    dragend: () => {
+      // Keep drag flag set for longer to ensure click events don't fire
+      if (dragTimeoutRef.current) {
+        clearTimeout(dragTimeoutRef.current)
+      }
+      dragTimeoutRef.current = setTimeout(() => {
+        isDraggingRef.current = false
+        hasDraggedRef.current = false
+        mouseMovedRef.current = false
+        mouseDownPosRef.current = null
+        dragTimeoutRef.current = null
+      }, 300)
+    },
+    click: (e) => {
+      // Block click if any drag occurred, mouse moved, or currently marked as dragging
+      if (!isDraggingRef.current && !hasDraggedRef.current && !mouseMovedRef.current) {
+        onMapClick(e.latlng.lat, e.latlng.lng, e)
+      }
+      // Reset tracking after click attempt
+      mouseDownPosRef.current = null
+      mouseMovedRef.current = false
+    },
+    dblclick: (e) => {
+      // Prevent default zoom on double-click only when drawing route
+      if (onDoubleClick) {
+        e.originalEvent.preventDefault()
+        e.originalEvent.stopPropagation()
+        onDoubleClick()
+      }
     },
     mouseout: () => {
-      onMouseOut?.()
+      if (onMouseOut) {
+        onMouseOut()
+      }
     },
     moveend: () => {
       if (boundsUpdateTimerRef.current) {
@@ -333,6 +377,38 @@ interface AirspaceMapProps {
 }
 
 export default function AirspaceMap({ initialData }: AirspaceMapProps) {
+  // Use a unique ID to track this instance
+  const instanceId = useId()
+  const mapContainerRef = useRef<HTMLDivElement>(null)
+  // Generate a fresh container id per mount so dev-mode double-mounts
+  // don't reuse the same DOM node for Leaflet (prevents _initContainer errors)
+  const containerIdRef = useRef<string>(`leaflet-${Math.random().toString(36).slice(2)}`)
+
+  // Defer mounting the MapContainer until after commit to avoid
+  // Leaflet initialization during React StrictMode's mount/unmount/mount.
+  const [showMap, setShowMap] = useState(false)
+  useEffect(() => {
+    setShowMap(true)
+    return () => setShowMap(false)
+  }, [])
+
+  // Ensure we remove the Leaflet map instance on unmount to avoid
+  // leftover DOM state that can cause "reused by another instance" errors.
+  useEffect(() => {
+    return () => {
+      if (mapRef.current) {
+        try {
+          mapRef.current.remove()
+        } catch (e) {
+          // ignore removal errors
+        }
+        mapRef.current = null
+      }
+    }
+  }, [])
+
+
+
   // Add error checking for initialData
   useEffect(() => {
     console.log('[Client] AirspaceMap: Component mounted')
@@ -363,9 +439,11 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     return initialData
   })
   const [uploadedFiles, setUploadedFiles] = useState<Array<{ id: string; name: string; data: AirspaceData[] }>>([])
+  // Start with side panel closed and no active tab; center on Squamish, BC
   const [isPanelOpen, setIsPanelOpen] = useState(false)
-  const [mapCenter, setMapCenter] = useState<LatLngExpression>([45.5017, -73.5673])
-  const [mapZoom, setMapZoom] = useState(6)
+  const [sidePanelActiveTab, setSidePanelActiveTab] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings' | null>(null)
+  const [mapCenter, setMapCenter] = useState<LatLngExpression>([49.7016, -123.1558])
+  const [mapZoom, setMapZoom] = useState(10)
   const mapRef = useRef<LeafletMap | null>(null)
   const [clickedPoint, setClickedPoint] = useState<{ lat: number; lon: number } | null>(null)
   const [mapBounds, setMapBounds] = useState<{ north: number; south: number; east: number; west: number } | null>(null)
@@ -374,6 +452,15 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
   const [elevation, setElevation] = useState<number | null>(null)
   const [isElevationLoading, setIsElevationLoading] = useState(false)
   const lastClickRef = useRef<{ lat: number; lon: number; time: number } | null>(null)
+
+  // Context menu state for map click options
+  const [contextMenu, setContextMenu] = useState<{
+    visible: boolean
+    x: number
+    y: number
+    lat: number
+    lon: number
+  } | null>(null)
 
   // Initialize fetchRadius from localStorage, default to 1km
   const [fetchRadius, setFetchRadius] = useState<number>(() => {
@@ -388,24 +475,68 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     }
     return 1
   })
-  
+
   // Persist fetchRadius to localStorage when it changes
   useEffect(() => {
     if (typeof window !== 'undefined') {
       localStorage.setItem('airspace-fetch-radius', fetchRadius.toString())
     }
   }, [fetchRadius])
-  
+
   const [elevationCells, setElevationCells] = useState<ElevationCellData[]>([])
   const [cursorPosition, setCursorPosition] = useState<{ lat: number; lon: number } | null>(null)
   const [elevationRange, setElevationRange] = useState<{ min: number; max: number }>({ min: 0, max: 100 })
+
+  // Route Drawing State
+  const [isDrawingRoute, setIsDrawingRoute] = useState(false)
+  const [routePoints, setRoutePoints] = useState<RoutePoint[]>([])
+  const [undoStack, setUndoStack] = useState<RoutePoint[][]>([])
+  const [redoStack, setRedoStack] = useState<RoutePoint[][]>([])
+
+  // When the user begins drawing a route, close any open popups/tooltips
+  // so they don't clutter the map while drawing.
+  useEffect(() => {
+    if (isDrawingRoute && mapRef.current) {
+      try {
+        mapRef.current.closePopup()
+        // also close any open tooltips
+        // @ts-ignore - Leaflet map has closeTooltip in runtime
+        if (typeof (mapRef.current as any).closeTooltip === 'function') {
+          ;(mapRef.current as any).closeTooltip()
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+  }, [isDrawingRoute])
   
-  // Polygon drawing state
-  const [isDrawingPolygon, setIsDrawingPolygon] = useState(false)
-  const [polygonVertices, setPolygonVertices] = useState<Array<{ lat: number; lon: number }>>([])
-  const [completedPolygon, setCompletedPolygon] = useState<Array<{ lat: number; lon: number }> | null>(null)
-  const [polygonError, setPolygonError] = useState<string | null>(null)
-  const [draggingVertexIndex, setDraggingVertexIndex] = useState<number | null>(null)
+  // Finished routes with their terrain profiles
+  const [finishedRoutes, setFinishedRoutes] = useState<Array<{
+    id: string
+    points: RoutePoint[]
+    terrainProfileWidth: number
+  }>>([])
+  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
+  const routeStats = useMemo(() => {
+    let distance = 0
+
+    for (let i = 0; i < routePoints.length - 1; i++) {
+      distance += getDistanceMeters(
+        routePoints[i].lat, routePoints[i].lon,
+        routePoints[i + 1].lat, routePoints[i + 1].lon
+      )
+    }
+
+    return { distance }
+  }, [routePoints])
+
+  // Helper to push state to undo stack
+  const pushToUndo = useCallback(() => {
+    setUndoStack(prev => [...prev, routePoints])
+    setRedoStack([]) // Clear redo stack on new action
+  }, [routePoints])
+
+
 
   // Basemap options - all free tile providers without API keys
   const basemapOptions = [
@@ -425,10 +556,10 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     { id: 'stadia-bright', name: 'Stadia OSM Bright' },
     { id: 'cyclosm', name: 'CyclOSM (Cycling)' },
   ]
-  
+
   // Selected basemap
   const [selectedBasemap, setSelectedBasemap] = useState<string>('topographic')
-  
+
   // Overlay layers (can be toggled independently)
   const [layers, setLayers] = useState<Layer[]>([
     { id: 'airspace', name: 'Airspace Restrictions', visible: true, opacity: 1.0 },
@@ -678,7 +809,7 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     })
   }
 
-  const handleMapClick = useCallback((lat: number, lon: number) => {
+  const handleMapClick = useCallback((lat: number, lon: number, event?: L.LeafletMouseEvent) => {
     // Normalize coordinates to 6 decimal places to prevent tiny epsilon changes
     const nLat = Number(lat.toFixed(6))
     const nLon = Number(lon.toFixed(6))
@@ -694,30 +825,56 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     }
     lastClickRef.current = { lat: nLat, lon: nLon, time: now }
 
-    // If in polygon drawing mode, add vertex instead of normal click behavior
-    if (isDrawingPolygon) {
-      setPolygonVertices(prev => [...prev, { lat: nLat, lon: nLon }])
-      setPolygonError(null)
+    // If drawing route, add point directly
+    if (isDrawingRoute) {
+      pushToUndo()
+      const newPoint: RoutePoint = {
+        id: crypto.randomUUID(),
+        lat: nLat,
+        lon: nLon
+      }
+      setRoutePoints(prev => [...prev, newPoint])
       return
     }
 
-    // Use a temporary variable to check against current state to avoid 
-    // unnecessary state updates if the point is essentially the same.
-    setClickedPoint(prev => {
-      if (prev && prev.lat === nLat && prev.lon === nLon) {
-        return prev
-      }
-      return { lat: nLat, lon: nLon }
+    // Show context menu for user to choose action
+    // Get screen position from the event
+    const screenX = event?.originalEvent?.clientX ?? window.innerWidth / 2
+    const screenY = event?.originalEvent?.clientY ?? window.innerHeight / 2
+    
+    setContextMenu({
+      visible: true,
+      x: screenX,
+      y: screenY,
+      lat: nLat,
+      lon: nLon
     })
+  }, [isDrawingRoute, pushToUndo])
 
-    // Batch simple state resets
-    setIsPanelOpen(false)
+  // Handle "Retrieve Airspace" from context menu
+  const handleRetrieveAirspace = useCallback(() => {
+    if (!contextMenu) return
+    
+    const { lat, lon } = contextMenu
+    setContextMenu(null) // Close menu
+    
+    // Set clicked point
+    setClickedPoint({ lat, lon })
+
+    // Check if there are airspaces at this point
+    const airspacesAtClick = findAirspacesNearby({ latitude: lat, longitude: lon }, fetchRadius, allAirspaces)
+    
+    // Open side panel and show aircolumn tab
+    setIsPanelOpen(true)
+    setSidePanelActiveTab('aircolumn')
+    
+    // Reset selection state
     setSelectedAirspaceId(null)
     setIsElevationLoading(true)
     setElevation(null)
 
     // Fetch elevation for this spot
-    fetch(`https://api.open-elevation.com/api/v1/lookup?locations=${nLat},${nLon}`)
+    fetch(`https://api.open-elevation.com/api/v1/lookup?locations=${lat},${lon}`)
       .then(res => res.json())
       .then(data => {
         if (data.results?.[0]) {
@@ -727,108 +884,140 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
       })
       .catch(err => console.error('Elevation fetch error:', err))
       .finally(() => setIsElevationLoading(false))
-  }, [isDrawingPolygon])
-  
-  // Start polygon drawing mode
-  const startPolygonDrawing = useCallback(() => {
-    if (clickedPoint) {
-      setIsDrawingPolygon(true)
-      setPolygonVertices([{ lat: clickedPoint.lat, lon: clickedPoint.lon }])
-      setCompletedPolygon(null)
-      setPolygonError(null)
-      setClickedPoint(null)  // Close the popup
-    }
-  }, [clickedPoint])
-  
-  // Undo last vertex
-  const undoLastVertex = useCallback(() => {
-    setPolygonVertices(prev => {
-      if (prev.length <= 1) return prev
-      return prev.slice(0, -1)
-    })
-    setPolygonError(null)
-  }, [])
-  
-  // Close the polygon (double-click or button)
-  const closePolygon = useCallback(() => {
-    if (polygonVertices.length < 3) {
-      setPolygonError('A polygon needs at least 3 vertices')
-      return
-    }
+  }, [contextMenu, fetchRadius, allAirspaces])
+
+  // Handle "Start Route" from context menu
+  const handleStartRouteFromMenu = useCallback(() => {
+    if (!contextMenu) return
     
-    // Check for self-intersection
-    if (hasSelfintersection(polygonVertices)) {
-      setPolygonError('Polygon edges cross over each other. Please redraw.')
-      setPolygonVertices([])
-      setIsDrawingPolygon(false)
-      return
-    }
+    const { lat, lon } = contextMenu
+    setContextMenu(null) // Close menu
     
-    // Complete the polygon
-    setCompletedPolygon(polygonVertices)
-    setIsDrawingPolygon(false)
-    setPolygonVertices([])
-    
-    // Fit map to show the polygon
-    if (mapRef.current && polygonVertices.length > 0) {
-      const bounds = polygonVertices.map(v => [v.lat, v.lon] as [number, number])
-      mapRef.current.fitBounds(bounds, {
-        padding: [50, 50],
-        maxZoom: 14,
-        animate: true
-      })
-    }
-  }, [polygonVertices])
-  
-  // Cancel polygon drawing
-  const cancelPolygonDrawing = useCallback(() => {
-    setIsDrawingPolygon(false)
-    setPolygonVertices([])
-    setPolygonError(null)
-  }, [])
-  
-  // Handle double-click to close polygon
-  const handlePolygonDoubleClick = useCallback(() => {
-    if (isDrawingPolygon && polygonVertices.length >= 3) {
-      closePolygon()
-    }
-  }, [isDrawingPolygon, polygonVertices.length, closePolygon])
-  
-  // Close completed polygon popup
-  const closeCompletedPolygon = useCallback(() => {
-    setCompletedPolygon(null)
-  }, [])
-  
-  // Retrieve airspace for the completed polygon
-  const retrieveAirspaceForPolygon = useCallback(() => {
-    if (!completedPolygon || completedPolygon.length < 3) return
-    
-    console.log('[AirspaceMap] Retrieve airspace for polygon:', completedPolygon)
-    
-    // Open the side panel to show the 3D polygon view
-    setIsPanelOpen(true)
-    
-    // Clear the point-based clicked point so we show polygon instead
+    // Start route drawing with this point as the first node
+    setIsDrawingRoute(true)
+    setRoutePoints([{ id: crypto.randomUUID(), lat, lon }])
+    setUndoStack([])
+    setRedoStack([])
+    setFinishedRoutes([])
+    setSelectedRouteId(null)
+    setIsPanelOpen(false)
     setClickedPoint(null)
-  }, [completedPolygon])
-  
-  // Memoize the completed polygon centroid to prevent flickering
-  const completedPolygonCentroid = useMemo(() => {
-    if (!completedPolygon || completedPolygon.length < 3) return null
-    return getPolygonCentroid(completedPolygon)
-  }, [completedPolygon])
-  
-  // Memoize the completed polygon positions for Leaflet
-  const completedPolygonPositions = useMemo(() => {
-    if (!completedPolygon || completedPolygon.length < 3) return null
-    return completedPolygon.map(v => [v.lat, v.lon] as LatLngExpression)
-  }, [completedPolygon])
-  
-  // Memoize popup position as LatLngExpression
-  const completedPolygonPopupPosition = useMemo((): LatLngExpression | null => {
-    if (!completedPolygonCentroid) return null
-    return [completedPolygonCentroid.lat, completedPolygonCentroid.lon]
-  }, [completedPolygonCentroid])
+  }, [contextMenu])
+
+
+
+  // Route Handlers
+  const handleStartMeasurement = useCallback(() => {
+    setIsDrawingRoute(true)
+    // Start with the clicked point as the first node
+    if (clickedPoint) {
+      setRoutePoints([{ id: crypto.randomUUID(), lat: clickedPoint.lat, lon: clickedPoint.lon }])
+    } else {
+      setRoutePoints([])
+    }
+    setUndoStack([])
+    setRedoStack([])
+    setFinishedRoutes([])
+    setSelectedRouteId(null)
+    setIsPanelOpen(false)
+  }, [clickedPoint])
+
+  const handleRoutePointMove = useCallback((id: string, lat: number, lon: number) => {
+    pushToUndo()
+    setRoutePoints(prev => prev.map(p => {
+      if (p.id === id) {
+        // Fetch new elevation on move end (if we wanted to be precise, or draggable updates it)
+        // For now just update coords
+        return { ...p, lat, lon }
+      }
+      return p
+    }))
+  }, [pushToUndo])
+
+  const handleSplitSegment = useCallback((index: number, lat: number, lon: number) => {
+    pushToUndo()
+    const newPoint: RoutePoint = {
+      id: crypto.randomUUID(),
+      lat,
+      lon
+    }
+
+
+
+    // Insert after index
+    setRoutePoints(prev => [
+      ...prev.slice(0, index + 1),
+      newPoint,
+      ...prev.slice(index + 1)
+    ])
+  }, [pushToUndo])
+
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0) return
+    const prev = undoStack[undoStack.length - 1]
+    const newUndo = undoStack.slice(0, -1)
+
+    setRedoStack(cur => [...cur, routePoints])
+    setRoutePoints(prev)
+    setUndoStack(newUndo)
+  }, [undoStack, routePoints])
+
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0) return
+    const next = redoStack[redoStack.length - 1]
+    const newRedo = redoStack.slice(0, -1)
+
+    setUndoStack(cur => [...cur, routePoints])
+    setRoutePoints(next)
+    setRedoStack(newRedo)
+  }, [redoStack, routePoints])
+
+  const handleRouteClear = useCallback(() => {
+    pushToUndo()
+    setRoutePoints([])
+  }, [pushToUndo])
+
+  const handleRouteImport = useCallback((points: Array<{ lat: number; lon: number; ele?: number }>) => {
+    pushToUndo()
+    const newPoints = points.map(p => ({
+      id: crypto.randomUUID(),
+      lat: p.lat,
+      lon: p.lon,
+      ele: p.ele
+    }))
+    setRoutePoints(newPoints)
+
+    // Fit map to imported route
+    if (mapRef.current && newPoints.length > 0) {
+      const bounds = L.latLngBounds(newPoints.map(p => [p.lat, p.lon]))
+      mapRef.current.fitBounds(bounds, { padding: [50, 50] })
+    }
+  }, [pushToUndo])
+
+  const handleRouteFinish = useCallback(() => {
+    if (isDrawingRoute && routePoints.length >= 2) {
+      setIsDrawingRoute(false)
+      
+      // Save finished route with terrain profile width set to current fetchRadius
+      const routeId = crypto.randomUUID()
+      setFinishedRoutes(prev => [...prev, {
+        id: routeId,
+        points: routePoints,
+        terrainProfileWidth: fetchRadius
+      }])
+      
+      setSelectedRouteId(routeId)
+      
+      // Open side panel and show air column tab
+      setIsPanelOpen(true)
+      setSidePanelActiveTab('aircolumn')
+      
+      // Clear drawing state
+      setRoutePoints([])
+      setUndoStack([])
+      setRedoStack([])
+    }
+  }, [isDrawingRoute, routePoints, fetchRadius])
 
   // Handle airspace selection from side panel
   const handleAirspaceSelect = useCallback((ids: string | string[]) => {
@@ -875,117 +1064,120 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
 
   // Memoize airspace layer rendering to prevent re-computation on every render
   const airspaceLayer = useMemo(() => {
-          // Filter airspaces by type and viewport bounds for performance
-          const filtered = allAirspaces
-            .filter(item => {
-              if (!visibleTypes.has(item.type)) return false
+    // Filter airspaces by type and viewport bounds for performance
+    const filtered = allAirspaces
+      .filter(item => {
+        if (!visibleTypes.has(item.type)) return false
 
-              // Skip if no bounds yet
-              if (!mapBounds) return true
+        // Skip if no bounds yet
+        if (!mapBounds) return true
 
-              // Optimized viewport filtering using pre-calculated bounds
-              const padding = 2.0
-              const b = item.bounds
-              if (b) {
-                return b.north >= mapBounds.south - padding &&
-                  b.south <= mapBounds.north + padding &&
-                  b.east >= mapBounds.west - padding &&
-                  b.west <= mapBounds.east + padding
-              }
+        // Optimized viewport filtering using pre-calculated bounds
+        const padding = 2.0
+        const b = item.bounds
+        if (b) {
+          return b.north >= mapBounds.south - padding &&
+            b.south <= mapBounds.north + padding &&
+            b.east >= mapBounds.west - padding &&
+            b.west <= mapBounds.east + padding
+        }
 
-              // Fallback filtering if bounds missing
-              if (item.polygon && item.polygon.length > 0) {
-                return item.polygon.some(coord =>
-                  coord.latitude >= mapBounds.south - padding &&
-                  coord.latitude <= mapBounds.north + padding &&
-                  coord.longitude >= mapBounds.west - padding &&
-                  coord.longitude <= mapBounds.east + padding
-                )
-              }
+        // Fallback filtering if bounds missing
+        if (item.polygon && item.polygon.length > 0) {
+          return item.polygon.some(coord =>
+            coord.latitude >= mapBounds.south - padding &&
+            coord.latitude <= mapBounds.north + padding &&
+            coord.longitude >= mapBounds.west - padding &&
+            coord.longitude <= mapBounds.east + padding
+          )
+        }
 
-              return true
-            })
+        return true
+      })
 
-          return filtered.map((item) => {
-            if (!item.coordinates && !item.polygon) return null
+    return filtered.map((item) => {
+      if (!item.coordinates && !item.polygon) return null
 
-            const color = getAirspaceColor(item.type)
-            const baseOpacity = getFillOpacity(item.type)
-            const layerOpacity = layers.find(l => l.id === 'airspace')?.opacity || 1.0
-            const fillOpacity = baseOpacity * layerOpacity
-            const isSelected = Array.isArray(selectedAirspaceId)
-              ? selectedAirspaceId.includes(item.id)
-              : selectedAirspaceId === item.id
+      const color = getAirspaceColor(item.type)
+      const baseOpacity = getFillOpacity(item.type)
+      const layerOpacity = layers.find(l => l.id === 'airspace')?.opacity || 1.0
+      const fillOpacity = baseOpacity * layerOpacity
+      const isSelected = Array.isArray(selectedAirspaceId)
+        ? selectedAirspaceId.includes(item.id)
+        : selectedAirspaceId === item.id
 
-            // Render polygon if available
-            if (item.polygon && item.polygon.length > 2) {
-              const polygonCoords: LatLngExpression[] = item.polygon.map(coord => [
-                coord.latitude,
-                coord.longitude,
-              ])
-              return (
-                <Polygon
-                  key={item.id}
-                  positions={polygonCoords}
-                  pathOptions={{
-                    color: isSelected ? '#facc15' : color,
-                    fillColor: color,
-                    fillOpacity: isSelected ? 0.6 : fillOpacity,
-                    weight: isSelected ? 4 : 1.5,
-                  }}
-                />
-              )
-            }
+      // Render polygon if available
+      if (item.polygon && item.polygon.length > 2) {
+        const polygonCoords: LatLngExpression[] = item.polygon.map(coord => [
+          coord.latitude,
+          coord.longitude,
+        ])
+        return (
+          <Polygon
+            key={item.id}
+            positions={polygonCoords}
+            pathOptions={{
+              color: isSelected ? '#facc15' : color,
+              fillColor: color,
+              fillOpacity: isSelected ? 0.6 : fillOpacity,
+              weight: isSelected ? 4 : 1.5,
+              interactive: false,
+            }}
+          />
+        )
+      }
 
-            // Render circle if radius is available
-            if (item.coordinates && item.radius) {
-              const center: LatLngExpression = [
-                item.coordinates.latitude,
-                item.coordinates.longitude,
-              ]
-              // Convert radius from nautical miles to meters (1 NM = 1852 meters)
-              const radiusMeters = item.radius * 1852
+      // Render circle if radius is available
+      if (item.coordinates && item.radius) {
+        const center: LatLngExpression = [
+          item.coordinates.latitude,
+          item.coordinates.longitude,
+        ]
+        // Convert radius from nautical miles to meters (1 NM = 1852 meters)
+        const radiusMeters = item.radius * 1852
 
-              return (
-                <Circle
-                  key={item.id}
-                  center={center}
-                  radius={radiusMeters}
-                  pathOptions={{
-                    color: isSelected ? '#facc15' : color,
-                    fillColor: color,
-                    fillOpacity: isSelected ? 0.6 : fillOpacity,
-                    weight: isSelected ? 4 : 1.5,
-                  }}
-                />
-              )
-            }
+        return (
+          <Circle
+            key={item.id}
+            center={center}
+            radius={radiusMeters}
+            pathOptions={{
+              color: isSelected ? '#facc15' : color,
+              fillColor: color,
+              fillOpacity: isSelected ? 0.6 : fillOpacity,
+              weight: isSelected ? 4 : 1.5,
+              interactive: false,
+            }}
+          />
+        )
+      }
 
-            // Fallback: render a small marker if only coordinates available
-            if (item.coordinates) {
-              const center: LatLngExpression = [
-                item.coordinates.latitude,
-                item.coordinates.longitude,
-              ]
-              const radiusMeters = 1852 // 1 nautical mile default
+      // Fallback: render a small marker if only coordinates available
+      if (item.coordinates) {
+        const center: LatLngExpression = [
+          item.coordinates.latitude,
+          item.coordinates.longitude,
+        ]
+        const radiusMeters = 1852 // 1 nautical mile default
 
-              return (
-                <Circle
-                  key={item.id}
-                  center={center}
-                  radius={radiusMeters}
-                  pathOptions={{
-                    color: isSelected ? '#facc15' : color,
-                    fillColor: color,
-                    fillOpacity: isSelected ? 0.6 : fillOpacity,
-                    weight: isSelected ? 4 : 1.5,
-                  }}
-                />
-              )
-            }
+        return (
+          <Circle
+            key={item.id}
+            center={center}
+            radius={radiusMeters}
+            pathOptions={{
+              color: isSelected ? '#facc15' : color,
+              fillColor: color,
+              fillOpacity: isSelected ? 0.6 : fillOpacity,
+              weight: isSelected ? 4 : 1.5,
+              interactive: false,
+            }}
+          />
+        )
+      }
 
-            return null
-          })
+      return null
+    })
   }, [allAirspaces, visibleTypes, mapBounds, layers, selectedAirspaceId])
 
   // Memoize allAirspaceData for SidePanel
@@ -1035,14 +1227,40 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
 
   return (
     <div style={{ height: '100%', width: '100%', position: 'relative' }}>
-      <MapContainer
-        center={mapCenter}
-        zoom={mapZoom}
-        style={{ height: '100%', width: '100%', zIndex: 1 }}
-        scrollWheelZoom={true}
-        zoomControl={false}
-        preferCanvas={true}
-        closePopupOnClick={false}
+      <div
+        id={`leaflet-wrapper-${instanceId}`}
+        ref={el => {
+          // Only set the ref if not already set, to avoid TypeScript read-only error
+          if (!mapContainerRef.current && el) {
+            (mapContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el as HTMLDivElement | null;
+          }
+          if (el) {
+            const existing = el.querySelector('.leaflet-container') as any;
+            if (existing && existing._leaflet_id) {
+              try {
+                delete existing._leaflet_id;
+              } catch (e) {
+                // ignore
+              }
+            }
+          }
+        }}
+        style={{ height: '100%', width: '100%' }}
+      >
+        {showMap && (
+          <MapContainer
+            key={containerIdRef.current}
+            id={containerIdRef.current}
+            ref={mapRef}
+            center={mapCenter}
+            zoom={mapZoom}
+            style={{ height: '100%', width: '100%', zIndex: 1 }}
+            scrollWheelZoom={true}
+            zoomControl={false}
+            preferCanvas={true}
+            closePopupOnClick={false}
+            scrollWheelZoom={true}
+            dragging={false}
       >
         <MapInitializer center={mapCenter} zoom={mapZoom} />
         <MapClickHandler
@@ -1052,7 +1270,8 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
           mapRef={mapRef}
           onMouseMove={(lat, lon) => setCursorPosition({ lat, lon })}
           onMouseOut={() => setCursorPosition(null)}
-          onDoubleClick={handlePolygonDoubleClick}
+          isDrawingRoute={isDrawingRoute}
+          onDoubleClick={handleRouteFinish}
         />
 
         {/* Basemap Layer - selected from dropdown */}
@@ -1193,8 +1412,80 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         {/* Render base airspace restrictions */}
         {layers.find(l => l.id === 'airspace')?.visible && airspaceLayer}
 
+        {/* Route Builder Overlay */}
+        {isDrawingRoute && (
+          <>
+            {/* Preview terrain corridor while drawing */}
+            {routePoints.length >= 2 && (
+              <Polygon
+                positions={generateTerrainCorridorPolygon(routePoints, fetchRadius)}
+                pathOptions={{
+                  color: '#3b82f6',
+                  fillColor: '#3b82f6',
+                  fillOpacity: 0.1,
+                  weight: 1,
+                  dashArray: '3, 3',
+                  interactive: false,
+                }}
+              />
+            )}
+            <RouteOverlay
+              points={routePoints}
+              onPointMove={handleRoutePointMove}
+              onSplitSegment={handleSplitSegment}
+            />
+          </>
+        )}
+
+        {/* Finished Routes Display */}
+        {finishedRoutes.map((route) => (
+          <React.Fragment key={route.id}>
+            {/* Terrain Corridor Polygon */}
+            <Polygon
+              positions={generateTerrainCorridorPolygon(route.points, route.terrainProfileWidth)}
+              pathOptions={{
+                color: '#10b981',
+                fillColor: '#10b981',
+                fillOpacity: 0.15,
+                weight: 2,
+                dashArray: '5, 5',
+                interactive: false,
+              }}
+            />
+            {/* Route Line Overlay */}
+            <RouteOverlay
+              points={route.points}
+              onPointMove={(id, lat, lon) => {
+                setFinishedRoutes(prev => prev.map(r => 
+                  r.id === route.id ? {
+                    ...r,
+                    points: r.points.map(p => p.id === id ? { ...p, lat, lon } : p)
+                  } : r
+                ))
+              }}
+              onSplitSegment={(index, lat, lon) => {
+                const newPoint = {
+                  id: crypto.randomUUID(),
+                  lat,
+                  lon
+                }
+                setFinishedRoutes(prev => prev.map(r => 
+                  r.id === route.id ? {
+                    ...r,
+                    points: [
+                      ...r.points.slice(0, index + 1),
+                      newPoint,
+                      ...r.points.slice(index + 1)
+                    ]
+                  } : r
+                ))
+              }}
+            />
+          </React.Fragment>
+        ))}
+
         {/* Preview circle following cursor */}
-        {cursorPosition && !clickedPoint && !isDrawingPolygon && (
+        {cursorPosition && !clickedPoint && !isDrawingRoute && (
           <Circle
             center={[cursorPosition.lat, cursorPosition.lon]}
             radius={fetchRadius * 1000}  // Convert km to meters
@@ -1204,12 +1495,13 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
               fillOpacity: 0.1,
               weight: 1.5,
               dashArray: '4, 4',
+              interactive: false,
             }}
           />
         )}
 
         {/* Circle showing cylinder base radius */}
-        {clickedPoint && !isDrawingPolygon && (
+        {clickedPoint && (
           <Circle
             center={[clickedPoint.lat, clickedPoint.lon]}
             radius={fetchRadius * 1000}  // Convert km to meters
@@ -1219,67 +1511,12 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
               fillOpacity: 0,
               weight: 2,
               dashArray: '5, 5',
+              interactive: false,
             }}
           />
         )}
 
-        {/* Polygon being drawn */}
-        {isDrawingPolygon && polygonVertices.length > 0 && (
-          <>
-            {/* Draw the polygon outline */}
-            {polygonVertices.length >= 2 && (
-              <Polygon
-                positions={polygonVertices.map(v => [v.lat, v.lon] as LatLngExpression)}
-                pathOptions={{
-                  color: '#ef4444',
-                  fillColor: '#ef4444',
-                  fillOpacity: 0.2,
-                  weight: 3,
-                }}
-              />
-            )}
-            {/* Draw vertex markers */}
-            {polygonVertices.map((vertex, idx) => (
-              <Circle
-                key={idx}
-                center={[vertex.lat, vertex.lon]}
-                radius={50}
-                pathOptions={{
-                  color: idx === 0 ? '#22c55e' : '#ef4444',
-                  fillColor: idx === 0 ? '#22c55e' : '#ffffff',
-                  fillOpacity: 1,
-                  weight: 2,
-                }}
-              />
-            ))}
-            {/* Draw line to cursor position */}
-            {cursorPosition && polygonVertices.length >= 1 && (
-              <Polygon
-                positions={[
-                  [polygonVertices[polygonVertices.length - 1].lat, polygonVertices[polygonVertices.length - 1].lon],
-                  [cursorPosition.lat, cursorPosition.lon]
-                ] as LatLngExpression[]}
-                pathOptions={{
-                  color: '#ef4444',
-                  fillOpacity: 0,
-                  weight: 2,
-                  dashArray: '5, 5',
-                }}
-              />
-            )}
-          </>
-        )}
 
-        {/* Completed polygon with popup */}
-        {completedPolygonPositions && completedPolygonPopupPosition && (
-          <CompletedPolygonOverlay
-            positions={completedPolygonPositions}
-            popupPosition={completedPolygonPopupPosition}
-            vertexCount={completedPolygon?.length || 0}
-            onRetrieveAirspace={retrieveAirspaceForPolygon}
-            onCancel={closeCompletedPolygon}
-          />
-        )}
 
         {/* Single Global Popup for performance - Hide if SidePanel is open */}
         {clickedPoint && !selectedAirspaceId && popupPosition && (
@@ -1346,29 +1583,10 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
                     Retrieve airspace here
                   </button>
                   <button
-                    disabled={true}
-                    style={{
-                      width: '100%',
-                      padding: '8px 10px',
-                      backgroundColor: '#f3f4f6',
-                      color: '#9ca3af',
-                      border: '2px solid #e5e7eb',
-                      borderRadius: '6px',
-                      fontSize: '12px',
-                      fontWeight: 'bold',
-                      cursor: 'not-allowed',
-                      transition: 'all 0.2s',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.02em'
-                    }}
-                  >
-                    Start drawing route (Coming Soon)
-                  </button>
-                  <button
                     onClick={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
-                      startPolygonDrawing()
+                      handleStartMeasurement()
                     }}
                     style={{
                       width: '100%',
@@ -1387,145 +1605,30 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
                     onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
                     onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#ef4444'}
                   >
-                    Define polygon
+                    Start drawing route
                   </button>
+
                 </div>
               </div>
             )}
           </Popup>
         )}
-      </MapContainer>
-      
-      {/* Polygon Drawing Toolbar */}
-      {isDrawingPolygon && (
-        <div style={{
-          position: 'absolute',
-          top: '20px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 1000,
-          backgroundColor: 'white',
-          borderRadius: '8px',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-          padding: '12px 16px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '8px',
-          fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif",
-        }}>
-          <div style={{ 
-            fontSize: '14px', 
-            fontWeight: 'bold', 
-            color: '#111827',
-            textAlign: 'center',
-            borderBottom: '1px solid #e5e7eb',
-            paddingBottom: '8px'
-          }}>
-            Drawing Polygon ({polygonVertices.length} vertices)
-          </div>
-          <div style={{ fontSize: '12px', color: '#6b7280', textAlign: 'center' }}>
-            Click to add vertices • Double-click to close
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              onClick={undoLastVertex}
-              disabled={polygonVertices.length <= 1}
-              style={{
-                flex: 1,
-                padding: '8px 12px',
-                backgroundColor: polygonVertices.length <= 1 ? '#e5e7eb' : '#f59e0b',
-                color: polygonVertices.length <= 1 ? '#9ca3af' : 'white',
-                border: 'none',
-                borderRadius: '6px',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                cursor: polygonVertices.length <= 1 ? 'not-allowed' : 'pointer',
-                textTransform: 'uppercase',
-              }}
-            >
-              Undo
-            </button>
-            <button
-              onClick={closePolygon}
-              disabled={polygonVertices.length < 3}
-              style={{
-                flex: 1,
-                padding: '8px 12px',
-                backgroundColor: polygonVertices.length < 3 ? '#e5e7eb' : '#22c55e',
-                color: polygonVertices.length < 3 ? '#9ca3af' : 'white',
-                border: 'none',
-                borderRadius: '6px',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                cursor: polygonVertices.length < 3 ? 'not-allowed' : 'pointer',
-                textTransform: 'uppercase',
-              }}
-            >
-              Close
-            </button>
-            <button
-              onClick={cancelPolygonDrawing}
-              style={{
-                flex: 1,
-                padding: '8px 12px',
-                backgroundColor: '#ef4444',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                cursor: 'pointer',
-                textTransform: 'uppercase',
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-      
-      {/* Polygon Error Message */}
-      {polygonError && (
-        <div style={{
-          position: 'absolute',
-          top: '20px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 1001,
-          backgroundColor: '#fef2f2',
-          border: '1px solid #fecaca',
-          borderRadius: '8px',
-          padding: '12px 16px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif",
-          boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-        }}>
-          <div style={{ color: '#dc2626', fontSize: '14px', fontWeight: '500' }}>
-            {polygonError}
-          </div>
-          <button
-            onClick={() => setPolygonError(null)}
-            style={{
-              backgroundColor: '#dc2626',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              padding: '4px 8px',
-              fontSize: '12px',
-              cursor: 'pointer',
-            }}
-          >
-            OK
-          </button>
-        </div>
-      )}
-      
+          </MapContainer>
+        )}
+      </div>
+
       {/* Side Panel */}
       <SidePanel
         isOpen={isPanelOpen}
-        onToggle={() => setIsPanelOpen(!isPanelOpen)}
+        onToggle={() => {
+          const newOpenState = !isPanelOpen
+          setIsPanelOpen(newOpenState)
+          // When closing the panel, clear the point and route data
+          if (!newOpenState) {
+            setClickedPoint(null)
+            setSelectedRouteId(null)
+          }
+        }}
         layers={layers}
         onLayerToggle={handleLayerToggle}
         onLayerOpacityChange={handleLayerOpacityChange}
@@ -1548,8 +1651,128 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
           setElevationCells(cells)
           setElevationRange({ min: minElev, max: maxElev })
         }}
-        activePolygon={completedPolygon}
+        selectedRoute={selectedRouteId && finishedRoutes.length > 0 ? finishedRoutes.find(r => r.id === selectedRouteId) : undefined}
+        activeTab={sidePanelActiveTab ?? undefined}
       />
+
+      {/* Route Builder UI */}
+      {isDrawingRoute && (
+        <RouteBuilderUI
+          distance={routeStats.distance}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onClear={handleRouteClear}
+          onCancel={() => setIsDrawingRoute(false)}
+          onFinish={handleRouteFinish}
+          onImport={handleRouteImport}
+          canUndo={undoStack.length > 0}
+          canRedo={redoStack.length > 0}
+        />
+      )}
+
+      {/* Context Menu for map clicks */}
+      {contextMenu?.visible && (
+        <>
+          {/* Backdrop to close menu on click outside */}
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 9998,
+            }}
+            onClick={() => setContextMenu(null)}
+          />
+          {/* Context menu */}
+          <div
+            style={{
+              position: 'fixed',
+              left: contextMenu.x,
+              top: contextMenu.y,
+              backgroundColor: 'white',
+              borderRadius: '8px',
+              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.1)',
+              border: '1px solid #e5e7eb',
+              zIndex: 9999,
+              minWidth: '200px',
+              overflow: 'hidden',
+              fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif",
+              transform: `translate(${contextMenu.x > window.innerWidth - 220 ? '-100%' : '0'}, ${contextMenu.y > window.innerHeight - 120 ? '-100%' : '0'})`,
+            }}
+          >
+            {/* Header with coordinates */}
+            <div style={{
+              padding: '10px 14px',
+              backgroundColor: '#f9fafb',
+              borderBottom: '1px solid #e5e7eb',
+              fontSize: '11px',
+              color: '#6b7280',
+              fontWeight: 500,
+            }}>
+              {contextMenu.lat.toFixed(5)}, {contextMenu.lon.toFixed(5)}
+            </div>
+            
+            {/* Menu options */}
+            <div style={{ padding: '6px 0' }}>
+              <button
+                onClick={handleRetrieveAirspace}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  width: '100%',
+                  padding: '10px 14px',
+                  border: 'none',
+                  backgroundColor: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  color: '#111827',
+                  textAlign: 'left',
+                  transition: 'background-color 0.15s',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="16" />
+                  <line x1="8" y1="12" x2="16" y2="12" />
+                </svg>
+                <span>Retrieve Airspace Here</span>
+              </button>
+              
+              <button
+                onClick={handleStartRouteFromMenu}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  width: '100%',
+                  padding: '10px 14px',
+                  border: 'none',
+                  backgroundColor: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  color: '#111827',
+                  textAlign: 'left',
+                  transition: 'background-color 0.15s',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                </svg>
+                <span>Start Drawing Route</span>
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+      {/* Terrain Profile is now displayed in the side panel air column tab */}
+
 
     </div>
   )

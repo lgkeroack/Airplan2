@@ -76,6 +76,19 @@ a {
   font-family: 'Futura', 'Trebuchet MS', Arial, sans-serif;
 }
 
+/* Ensure dragging works properly */
+.leaflet-grab {
+  cursor: grab !important;
+}
+
+.leaflet-dragging,
+.leaflet-dragging .leaflet-container,
+.leaflet-dragging .leaflet-grab,
+.leaflet-dragging .leaflet-grab .leaflet-interactive,
+.leaflet-dragging .leaflet-marker-draggable {
+  cursor: grabbing !important;
+}
+
 /* Ensure Futura is used in Leaflet popups */
 .leaflet-popup-content-wrapper,
 .leaflet-popup-content,

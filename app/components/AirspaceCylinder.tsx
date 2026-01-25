@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
-import { Canvas } from '@react-three/fiber'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, Line, Text, Billboard, Html } from '@react-three/drei'
-import { BufferAttribute, DoubleSide, BufferGeometry, Color, IncrementStencilOp, NotEqualStencilFunc, MOUSE } from 'three'
+import { BufferAttribute, DoubleSide, BufferGeometry, Color, IncrementStencilOp, NotEqualStencilFunc, MOUSE, Group } from 'three'
 import type { AirspaceData } from '@/lib/types'
 
 export interface ElevationCellData {
@@ -20,6 +21,39 @@ interface AirspaceCylinderProps {
     airspacesAtPoint?: AirspaceData[]
     isExpanded?: boolean
     onToggleExpand?: () => void
+    selectedBasemap?: string
+}
+
+// Map tile URL templates for different basemaps
+const BASEMAP_URLS: Record<string, string> = {
+    'topographic': 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
+    'osm': 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    'osm-humanitarian': 'https://a.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
+    'cartodb-positron': 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+    'cartodb-dark': 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+    'cartodb-voyager': 'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+    'esri-imagery': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    'esri-topo': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    'esri-street': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+}
+
+// Convert lat/lon to tile coordinates
+function latLonToTile(lat: number, lon: number, zoom: number): { x: number; y: number; pixelX: number; pixelY: number } {
+    const n = Math.pow(2, zoom)
+    const xTile = Math.floor((lon + 180) / 360 * n)
+    const latRad = lat * Math.PI / 180
+    const yTile = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n)
+    
+    // Calculate pixel position within tile (0-255)
+    const xFrac = ((lon + 180) / 360 * n) - xTile
+    const yFrac = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n) - yTile
+    
+    return {
+        x: xTile,
+        y: yTile,
+        pixelX: Math.floor(xFrac * 256),
+        pixelY: Math.floor(yFrac * 256)
+    }
 }
 
 interface ElevationCell {
@@ -155,17 +189,35 @@ function bilinearInterpolate(
     return e0 * (1 - tzc) + e1 * tzc
 }
 
-function ElevationMosaic({ cells, minElev, maxElev, isLoading, gridSize, radiusKm }: { 
+function ElevationMosaic({ cells, minElev, maxElev, isLoading, gridSize, radiusKm, airspaces = [], cellColors = {} }: { 
     cells: ElevationCell[], 
     minElev: number, 
     maxElev: number,
     isLoading: boolean,
     gridSize: number,
-    radiusKm: number
+    radiusKm: number,
+    airspaces?: AirspaceData[],
+    cellColors?: Record<string, [number, number, number]>  // lat,lon -> RGB (0-1)
 }) {
     const cylinderRadius = 1.5
+    const cylinderBottom = -2
+    const cylinderHeight = 4
     // Scale subdivisions based on grid size for appropriate detail
     const subdivisions = Math.max(12, Math.min(48, gridSize * 2))
+    
+    // Calculate the same scale range as ElevationScaleBar and AirspaceVolumes
+    const { scaleMin, scaleRange } = useMemo(() => {
+        let maxAltM = maxElev
+        for (const airspace of airspaces) {
+            const ceiling = airspace.altitude?.ceiling || 18000
+            const ceilingM = Math.round(ceiling / 3.28084)
+            if (ceilingM > maxAltM) {
+                maxAltM = ceilingM
+            }
+        }
+        const range = maxAltM - minElev
+        return { scaleMin: minElev, scaleRange: range > 0 ? range : 1 }
+    }, [minElev, maxElev, airspaces])
     
     // Find the maximum positive elevation for normalization
     const maxPositiveElev = useMemo(() => {
@@ -201,24 +253,61 @@ function ElevationMosaic({ cells, minElev, maxElev, isLoading, gridSize, radiusK
         const geometry = new BufferGeometry()
         const size = cylinderRadius * 2
         const step = size / subdivisions
-        const maxHeight = (size / gridSize) * 0.95
-        const verticalExaggeration = 4.0  // 4x vertical exaggeration for terrain
+        
+        // Convert elevation (in meters) to Y position using same scale as airspaces
+        // Defined inside useMemo to properly capture scaleMin and scaleRange
+        const elevToY = (elevM: number): number => {
+            const t = Math.max(0, Math.min(1, (elevM - scaleMin) / scaleRange))
+            return cylinderBottom + t * cylinderHeight
+        }
         
         // For flat shading, each triangle has its own vertices (no sharing)
         const vertices: number[] = []
         const colors: number[] = []
         
-        // Helper to get height at a point (with vertical exaggeration)
+        // Helper to get height at a point using the same scale as airspaces
+        // This maps actual elevation to Y position so terrain aligns with airspace altitudes
         const getHeight = (x: number, z: number): number => {
             const dist = Math.sqrt(x * x + z * z)
             if (dist > cylinderRadius) return 0
             const elev = bilinearInterpolate(x, z, cells, gridSize, cylinderRadius)
-            return elev > 0 ? (elev / maxPositiveElev) * maxHeight * verticalExaggeration : 0
+            // Use the shared scale - elevToY returns absolute Y position, 
+            // but we need height relative to the base (Y=0 in local coords since group is at Y=-2)
+            return elev > 0 ? elevToY(elev) - cylinderBottom : 0
         }
         
         // Helper to get elevation at a point
         const getElev = (x: number, z: number): number => {
             return bilinearInterpolate(x, z, cells, gridSize, cylinderRadius)
+        }
+        
+        // Helper to get color at a point - use basemap color if available, else elevation color
+        const getColor = (x: number, z: number): [number, number, number] => {
+            // Find nearest cell to get its lat/lon
+            const cellSize = (cylinderRadius * 2) / gridSize
+            let nearestCell: ElevationCell | null = null
+            let nearestDist = Infinity
+            
+            for (const cell of cells) {
+                const dx = cell.x - x
+                const dz = cell.z - z
+                const dist = dx * dx + dz * dz
+                if (dist < nearestDist) {
+                    nearestDist = dist
+                    nearestCell = cell
+                }
+            }
+            
+            if (nearestCell) {
+                const key = `${nearestCell.lat.toFixed(4)},${nearestCell.lon.toFixed(4)}`
+                if (cellColors[key]) {
+                    return cellColors[key]
+                }
+            }
+            
+            // Fallback to elevation-based color
+            const elev = getElev(x, z)
+            return parseColor(getElevationColor(elev, minElev, maxElev))
         }
         
         // Create ALL triangles with flat shading (shader will clip to circle)
@@ -240,8 +329,10 @@ function ElevationMosaic({ cells, minElev, maxElev, isLoading, gridSize, radiusK
                 vertices.push(x0, h01, z1)
                 vertices.push(x1, h10, z0)
                 
-                const elev1 = (getElev(x0, z0) + getElev(x0, z1) + getElev(x1, z0)) / 3
-                const color1 = parseColor(getElevationColor(elev1, minElev, maxElev))
+                // Get color from basemap if available, else use elevation
+                const cx1 = (x0 + x0 + x1) / 3
+                const cz1 = (z0 + z1 + z0) / 3
+                const color1 = getColor(cx1, cz1)
                 colors.push(...color1, ...color1, ...color1)
                 
                 // Triangle 2: (1,0) -> (0,1) -> (1,1)
@@ -249,8 +340,9 @@ function ElevationMosaic({ cells, minElev, maxElev, isLoading, gridSize, radiusK
                 vertices.push(x0, h01, z1)
                 vertices.push(x1, h11, z1)
                 
-                const elev2 = (getElev(x1, z0) + getElev(x0, z1) + getElev(x1, z1)) / 3
-                const color2 = parseColor(getElevationColor(elev2, minElev, maxElev))
+                const cx2 = (x1 + x0 + x1) / 3
+                const cz2 = (z0 + z1 + z1) / 3
+                const color2 = getColor(cx2, cz2)
                 colors.push(...color2, ...color2, ...color2)
             }
         }
@@ -260,7 +352,7 @@ function ElevationMosaic({ cells, minElev, maxElev, isLoading, gridSize, radiusK
         geometry.computeVertexNormals()
         
         return geometry
-    }, [cells, minElev, maxElev, maxPositiveElev, gridSize, subdivisions])
+    }, [cells, minElev, maxElev, maxPositiveElev, gridSize, subdivisions, scaleMin, scaleRange, cellColors])
 
     // Get height at a specific cell for labels
     const getCellHeight = (cell: ElevationCell) => {
@@ -340,53 +432,11 @@ function ElevationMosaic({ cells, minElev, maxElev, isLoading, gridSize, radiusK
                 </>
             )}
             
-            {/* Grid lines for reference */}
-            {cells.map((cell, idx) => {
-                const dist = Math.sqrt(cell.x * cell.x + cell.z * cell.z)
-                if (dist > cylinderRadius) return null
-                const height = getCellHeight(cell)
-
-    return (
-        <mesh
-                        key={idx}
-                        position={[cell.x, height + 0.01, cell.z]}
-                        rotation={[-Math.PI / 2, 0, 0]}
-        >
-                        <ringGeometry args={[0.01, 0.03, 8]} />
-                        <meshBasicMaterial color="#333333" transparent opacity={0.5} />
-        </mesh>
-    )
-            })}
-
             {/* Circle outline */}
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.005, 0]}>
                 <ringGeometry args={[1.48, 1.52, 64]} />
                 <meshBasicMaterial color="#666666" side={DoubleSide} />
             </mesh>
-
-            {/* Elevation labels on some cells - only show when data is loaded */}
-            {!isLoading && cells.filter((c, idx) => idx % 7 === 0 && c.elevation !== null).map((cell, idx) => {
-                const dist = Math.sqrt(cell.x * cell.x + cell.z * cell.z)
-                if (dist > cylinderRadius * 0.9) return null
-                
-                // Position label above the terrain
-                const labelY = getCellHeight(cell) + 0.15
-
-                return (
-                    <Billboard key={idx} position={[cell.x, labelY, cell.z]} follow={true}>
-                        <Text
-                            fontSize={0.12}
-                            color="#333333"
-                            anchorX="center"
-                            anchorY="middle"
-                            outlineWidth={0.015}
-                            outlineColor="#ffffff"
-                        >
-                            {Math.round(cell.elevation!)}m
-                        </Text>
-                    </Billboard>
-                )
-            })}
         </group>
     )
 }
@@ -411,19 +461,6 @@ function RadiusLabel({ radiusKm }: { radiusKm: number }) {
     return (
         <group>
             <group position={[0, -2, 0]}>
-                <Billboard position={[1.85, 0.1, 0]} follow={true}>
-                    <Text
-                        fontSize={0.18}
-                        color="#374151"
-                        anchorX="center"
-                        anchorY="middle"
-                        outlineWidth={0.02}
-                        outlineColor="#ffffff"
-                    >
-                        {radiusKm} km
-                    </Text>
-                </Billboard>
-                
                 {dottedLinePoints.map((points, idx) => (
                     <Line
                         key={idx}
@@ -462,22 +499,337 @@ function NorthIndicator() {
             <mesh geometry={triangleGeometry} position={[0, 0.01, 0]}>
                 <meshBasicMaterial color="#dc2626" side={DoubleSide} />
             </mesh>
+        </group>
+    )
+}
+
+// Click position marker at the center of cylinder - white line with V at top
+function ClickPositionMarker({ centerElevation, minElev, maxElev, airspaces = [] }: { 
+    centerElevation: number; 
+    minElev: number; 
+    maxElev: number;
+    airspaces?: AirspaceData[];
+}) {
+    const cylinderBottom = -2
+    const cylinderHeight = 4
+    
+    // Calculate scale range same as other components
+    const { scaleMin, scaleRange } = useMemo(() => {
+        let maxAltM = maxElev
+        for (const airspace of airspaces) {
+            const ceiling = airspace.altitude?.ceiling || 18000
+            const ceilingM = Math.round(ceiling / 3.28084)
+            if (ceilingM > maxAltM) {
+                maxAltM = ceilingM
+            }
+        }
+        const range = maxAltM - minElev
+        return { scaleMin: minElev, scaleRange: range > 0 ? range : 1 }
+    }, [minElev, maxElev, airspaces])
+    
+    // Calculate Y positions for the line (from center terrain elevation to 100m above highest elevation)
+    const bottomElev = centerElevation
+    const topElev = maxElev + 100  // 100m above highest terrain in cylinder
+    
+    const tBottom = Math.max(0, Math.min(1, (bottomElev - scaleMin) / scaleRange))
+    const tTop = Math.max(0, Math.min(1, (topElev - scaleMin) / scaleRange))
+    
+    const yBottom = cylinderBottom + tBottom * cylinderHeight
+    const yTop = cylinderBottom + tTop * cylinderHeight
+    
+    // V shape dimensions at the top
+    const vSize = 0.08
+    
+    // Create line geometry for vertical line + V shape
+    const linePoints = useMemo(() => {
+        const points: [number, number, number][] = [
+            // Vertical line
+            [0, yBottom, 0],
+            [0, yTop, 0],
+        ]
+        return points
+    }, [yBottom, yTop])
+    
+    const vPoints = useMemo(() => {
+        // V shape at the top
+        return [
+            [-vSize, yTop + vSize, 0],
+            [0, yTop, 0],
+            [vSize, yTop + vSize, 0],
+        ] as [number, number, number][]
+    }, [yTop, vSize])
+    
+    return (
+        <group>
+            {/* Vertical white line */}
+            <Line 
+                points={linePoints} 
+                color="white" 
+                lineWidth={2}
+            />
+            {/* V shape at top */}
+            <Line 
+                points={vPoints} 
+                color="white" 
+                lineWidth={2}
+            />
+        </group>
+    )
+}
+
+// Elevation scale bar with Billboard labels - extends to include airspace ceilings
+// Stays fixed on the left side of the view (counter-rotates with camera)
+function ElevationScaleBar({ minElev, maxElev, airspaces = [] }: { minElev: number; maxElev: number; airspaces?: AirspaceData[] }) {
+    const groupRef = useRef<Group>(null)
+    const { camera } = useThree()
+    
+    const cylinderBottom = -2
+    const cylinderTop = 2
+    const cylinderHeight = cylinderTop - cylinderBottom
+    
+    // Distance from center for the scale bar
+    const scaleBarRadius = 1.8
+    
+    // Update scale bar position each frame to stay on the left side of the view
+    useFrame(() => {
+        if (!groupRef.current) return
+        
+        // Get camera's horizontal angle (azimuth)
+        const cameraX = camera.position.x
+        const cameraZ = camera.position.z
+        const cameraAngle = Math.atan2(cameraX, cameraZ)
+        
+        // Position the scale bar 90 degrees to the left of the camera's view
+        const leftAngle = cameraAngle + Math.PI / 2
+        const x = Math.sin(leftAngle) * scaleBarRadius
+        const z = Math.cos(leftAngle) * scaleBarRadius
+        
+        groupRef.current.position.x = x
+        groupRef.current.position.z = z
+        
+        // Rotate the scale bar to face the camera
+        groupRef.current.rotation.y = cameraAngle
+    })
+    
+    // Calculate the full altitude range including airspaces above and below terrain
+    const { scaleMin, scaleMax } = useMemo(() => {
+        let minAltM = minElev
+        let maxAltM = maxElev
+        
+        // Find the lowest floor and highest ceiling
+        for (const airspace of airspaces) {
+            const floor = airspace.altitude?.floor || 0
+            const ceiling = airspace.altitude?.ceiling || 18000
+            const floorM = Math.round(floor / 3.28084)
+            const ceilingM = Math.round(ceiling / 3.28084)
+            if (floorM < minAltM) {
+                minAltM = floorM
+            }
+            if (ceilingM > maxAltM) {
+                maxAltM = ceilingM
+            }
+        }
+        
+        return { scaleMin: minAltM, scaleMax: maxAltM }
+    }, [minElev, maxElev, airspaces])
+    
+    const scaleRange = scaleMax - scaleMin
+    
+    // Calculate scale marks
+    const scaleMarks = useMemo(() => {
+        const marks: { y: number; label: string; elevation: number; isTerrain: boolean }[] = []
+        
+        if (scaleRange <= 0) return marks
+        
+        // Add min elevation at bottom (terrain floor)
+        marks.push({ 
+            y: cylinderBottom, 
+            label: `${Math.round(scaleMin)}m`,
+            elevation: scaleMin,
+            isTerrain: true
+        })
+        
+        // Add terrain max elevation
+        if (maxElev > scaleMin && maxElev < scaleMax) {
+            const t = (maxElev - scaleMin) / scaleRange
+            const y = cylinderBottom + t * cylinderHeight
+            marks.push({ 
+                y, 
+                label: `${Math.round(maxElev)}m`,
+                elevation: maxElev,
+                isTerrain: true
+            })
+        }
+        
+        // Add intermediate marks at nice intervals
+        const intervals = [100, 200, 500, 1000, 2000, 5000]
+        let interval = 500
+        for (const int of intervals) {
+            if (scaleRange / int <= 8) {
+                interval = int
+                break
+            }
+        }
+        
+        const startElev = Math.ceil(scaleMin / interval) * interval
+        for (let elev = startElev; elev < scaleMax; elev += interval) {
+            // Skip if too close to existing marks
+            const tooClose = marks.some(m => Math.abs(m.elevation - elev) < interval * 0.3)
+            if (!tooClose && elev > scaleMin) {
+                const t = (elev - scaleMin) / scaleRange
+                const y = cylinderBottom + t * cylinderHeight
+                marks.push({ y, label: `${Math.round(elev)}m`, elevation: elev, isTerrain: false })
+            }
+        }
+        
+        // Add max altitude at top
+        marks.push({ 
+            y: cylinderTop, 
+            label: `${Math.round(scaleMax)}m`,
+            elevation: scaleMax,
+            isTerrain: false
+        })
+        
+        return marks
+    }, [scaleMin, scaleMax, scaleRange, maxElev])
+    
+    // Calculate airspace boundary notches (floor and ceiling in meters) with labels
+    const airspaceNotches = useMemo(() => {
+        const notches: { y: number; color: string; altM: number; label: string }[] = []
+        
+        if (scaleRange <= 0) return notches
+        
+        // Get unique altitude boundaries from airspaces
+        const altitudes = new Map<number, string>() // altitude in meters -> color
+        
+        for (const airspace of airspaces) {
+            const floor = airspace.altitude?.floor || 0
+            const ceiling = airspace.altitude?.ceiling || 18000
+            const color = getAirspaceColor(airspace.type)
             
-            <Billboard position={[0, 0.2, -2.0]} follow={true}>
+            // Convert feet to meters
+            const floorM = Math.round(floor / 3.28084)
+            const ceilingM = Math.round(ceiling / 3.28084)
+            
+            // Add floor and ceiling notches
+            if (floorM >= scaleMin && floorM <= scaleMax) {
+                altitudes.set(floorM, color)
+            }
+            if (ceilingM >= scaleMin && ceilingM <= scaleMax) {
+                altitudes.set(ceilingM, color)
+            }
+        }
+        
+        // Convert to notches with Y positions and labels
+        for (const [altM, color] of altitudes) {
+            const t = (altM - scaleMin) / scaleRange
+            const y = cylinderBottom + t * cylinderHeight
+            notches.push({ y, color, altM, label: `${altM}m` })
+        }
+        
+        // Sort by altitude for consistent rendering
+        notches.sort((a, b) => a.altM - b.altM)
+        
+        return notches
+    }, [airspaces, scaleMin, scaleMax, scaleRange])
+    
+    const tickWidth = 0.1
+    
+    return (
+        <group ref={groupRef}>
+            {/* Main vertical line */}
+            <Line
+                points={[[0, cylinderBottom, 0], [0, cylinderTop, 0]]}
+                color="#6b7280"
+                lineWidth={2}
+            />
+            
+            {/* Scale marks and Billboard labels */}
+            {scaleMarks.map((mark, idx) => (
+                <group key={idx} position={[0, mark.y, 0]}>
+                    {/* Horizontal tick mark - green for terrain, gray for altitude */}
+                    <Line
+                        points={[[-tickWidth, 0, 0], [tickWidth, 0, 0]]}
+                        color={mark.isTerrain ? "#22c55e" : "#6b7280"}
+                        lineWidth={2}
+                    />
+                    
+                    {/* Billboard elevation label */}
+                    <Billboard position={[-0.25, 0, 0]} follow={true}>
+                        <Text
+                            fontSize={0.12}
+                            color={mark.isTerrain ? "#166534" : "#374151"}
+                            anchorX="right"
+                            anchorY="middle"
+                            outlineWidth={0.015}
+                            outlineColor="#ffffff"
+                        >
+                            {mark.label}
+                        </Text>
+                    </Billboard>
+                </group>
+            ))}
+            
+            {/* Airspace boundary notches with labels on the right */}
+            {airspaceNotches.map((notch, idx) => (
+                <group key={`airspace-notch-${idx}`} position={[0, notch.y, 0]}>
+                    {/* Colored tick mark for airspace boundary */}
+                    <Line
+                        points={[[tickWidth * 0.5, 0, 0], [tickWidth * 2.5, 0, 0]]}
+                        color={notch.color}
+                        lineWidth={3}
+                    />
+                    {/* Billboard label for airspace boundary on the right side */}
+                    <Billboard position={[0.45, 0, 0]} follow={true}>
+                        <Text
+                            fontSize={0.1}
+                            color={notch.color}
+                            anchorX="left"
+                            anchorY="middle"
+                            outlineWidth={0.015}
+                            outlineColor="#ffffff"
+                        >
+                            {notch.label}
+                        </Text>
+                    </Billboard>
+                </group>
+            ))}
+            
+            {/* Title label at top */}
+            <Billboard position={[0, cylinderTop + 0.25, 0]} follow={true}>
                 <Text
-                    fontSize={0.15}
-                    color="#dc2626"
+                    fontSize={0.1}
+                    color="#374151"
                     anchorX="center"
                     anchorY="middle"
-                    outlineWidth={0.015}
+                    outlineWidth={0.012}
                     outlineColor="#ffffff"
                     fontWeight="bold"
                 >
-                    N
+                    Alt
                 </Text>
             </Billboard>
         </group>
     )
+}
+
+// Format date string for display (compact format)
+function formatAirspaceDate(dateStr: string | undefined): string | null {
+    if (!dateStr) return null
+    try {
+        const date = new Date(dateStr)
+        if (isNaN(date.getTime())) return null
+        // Format as "Jan 23" or "Jan 23, 2026" if not current year
+        const now = new Date()
+        const month = date.toLocaleDateString('en-US', { month: 'short' })
+        const day = date.getDate()
+        if (date.getFullYear() === now.getFullYear()) {
+            return `${month} ${day}`
+        }
+        return `${month} ${day}, ${date.getFullYear()}`
+    } catch {
+        return null
+    }
 }
 
 // Get color for airspace type (same as air column graph)
@@ -552,14 +904,14 @@ function pointInAirspaceLocal(
 // Render airspace volumes showing only the intersection with the search circle
 function AirspaceVolumes({ 
     airspaces, 
-    minAlt = 0, 
-    maxAlt = 18000,
+    minElev,
+    maxElev,
     clickedPoint,
     radiusKm
 }: { 
     airspaces: AirspaceData[], 
-    minAlt?: number, 
-    maxAlt?: number,
+    minElev: number,
+    maxElev: number,
     clickedPoint: { lat: number; lon: number },
     radiusKm: number
 }) {
@@ -577,11 +929,28 @@ function AirspaceVolumes({
     const cylinderTop = 2
     const cylinderHeight = cylinderTop - cylinderBottom
     
-    // Convert altitude (in feet) to Y position
-    const altToY = (alt: number): number => {
-        const t = (alt - minAlt) / (maxAlt - minAlt)
-        return cylinderBottom + t * cylinderHeight
-    }
+    // Calculate the scale range including airspace floors and ceilings
+    // Extend range to show airspaces even if they're below terrain
+    const { scaleMin, scaleMax, scaleRange } = useMemo(() => {
+        // Find the lowest airspace floor and highest ceiling (convert feet to meters)
+        let minAltM = minElev
+        let maxAltM = maxElev
+        for (const airspace of airspaces) {
+            const floor = airspace.altitude?.floor || 0
+            const ceiling = airspace.altitude?.ceiling || 18000
+            const floorM = Math.round(floor / 3.28084)
+            const ceilingM = Math.round(ceiling / 3.28084)
+            if (floorM < minAltM) {
+                minAltM = floorM
+            }
+            if (ceilingM > maxAltM) {
+                maxAltM = ceilingM
+            }
+        }
+        
+        const range = maxAltM - minAltM
+        return { scaleMin: minAltM, scaleMax: maxAltM, scaleRange: range > 0 ? range : 1 }
+    }, [minElev, maxElev, airspaces])
     
     // Convert cylinder local coordinates to lat/lon
     const localToLatLon = (x: number, z: number): { lat: number; lon: number } => {
@@ -601,6 +970,17 @@ function AirspaceVolumes({
     const airspaceGeometries = useMemo(() => {
         const angularSegments = 64 // Higher for smoother circular edges
         const radialSegments = 24 // More radial divisions for smoother boundaries
+        
+        // Convert altitude (in feet) to Y position - defined inside useMemo to capture values
+        // Uses linear mapping: scaleMin (meters) -> cylinderBottom, scaleMax (meters) -> cylinderTop
+        // Allow airspaces to extend below terrain level
+        const altToY = (altFt: number): number => {
+            const altM = altFt / 3.28084  // Convert feet to meters
+            
+            // Linear mapping without clamping to allow low airspaces
+            const t = (altM - scaleMin) / scaleRange
+            return cylinderBottom + t * cylinderHeight
+        }
         
         return airspaces.map(airspace => {
             const floor = airspace.altitude?.floor || 0
@@ -817,7 +1197,7 @@ function AirspaceVolumes({
                 id: airspace.id
             }
         }).filter(Boolean)
-    }, [airspaces, clickedPoint, radiusKm, cylinderRadius, altToY, localToLatLon])
+    }, [airspaces, clickedPoint, radiusKm, cylinderRadius, scaleMin, scaleRange, localToLatLon])
     
     // Group airspaces by type and compute fixed label positions on the right side
     // Labels are ordered by average altitude (highest at top) to minimize line crossings
@@ -898,57 +1278,6 @@ function AirspaceVolumes({
         </mesh>
     )
             })}
-            
-            {/* Render labels on the right side with connector lines */}
-            {typeLabels.map((label, idx) => (
-                <group key={label.type + idx}>
-                    {/* Connector lines from label to each airspace of this type */}
-                    {label.airspaceCenters.map((center, centerIdx) => (
-                        <Line
-                            key={centerIdx}
-                            points={[label.labelPosition, center]}
-                            color={label.color}
-                            lineWidth={1.5}
-                            dashed={true}
-                            dashSize={0.08}
-                            gapSize={0.04}
-                        />
-                    ))}
-                    
-                    {/* Small marker dot at line endpoint */}
-                    <mesh position={label.labelPosition}>
-                        <sphereGeometry args={[0.04, 8, 8]} />
-                        <meshBasicMaterial color={label.color} />
-                    </mesh>
-                    
-                    {/* Static HTML label - doesn't rotate with the scene */}
-                    <Html
-                        position={[
-                            label.labelPosition[0] + 0.2, 
-                            label.labelPosition[1], 
-                            label.labelPosition[2]
-                        ]}
-                        style={{
-                            pointerEvents: 'none',
-                            whiteSpace: 'nowrap',
-                            transform: 'translateY(-50%)'
-                        }}
-                        transform={false}
-                        sprite={false}
-                    >
-                        <div style={{
-                            fontSize: '13px',
-                            fontWeight: 'bold',
-                            color: label.color,
-                            textShadow: '0 0 3px white, 0 0 3px white, 0 0 3px white, 0 0 3px white',
-                            userSelect: 'none',
-                            lineHeight: 1
-                        }}>
-                            {label.type}
-                        </div>
-                    </Html>
-                </group>
-            ))}
         </group>
     )
 }
@@ -1118,54 +1447,6 @@ function ThermalHotspots({ hotspots }: { hotspots: ThermalHotspot[] }) {
                     </group>
                 )
             })}
-            
-            {/* Label with connector line */}
-            {labelData && (
-                <group>
-                    {/* Connector line from label to strongest thermal */}
-                    <Line
-                        points={[labelData.labelPosition, labelData.connectionPoint]}
-                        color={labelData.color}
-                        lineWidth={1.5}
-                        dashed={true}
-                        dashSize={0.08}
-                        gapSize={0.04}
-                    />
-                    
-                    {/* Small marker dot at line endpoint on thermal */}
-                    <mesh position={labelData.connectionPoint}>
-                        <sphereGeometry args={[0.04, 8, 8]} />
-                        <meshBasicMaterial color={labelData.color} />
-                    </mesh>
-                    
-                    {/* Static HTML label - doesn't rotate with the scene */}
-                    <Html
-                        position={[
-                            labelData.labelPosition[0] - 0.2,
-                            labelData.labelPosition[1],
-                            labelData.labelPosition[2]
-                        ]}
-                        style={{
-                            pointerEvents: 'none',
-                            whiteSpace: 'nowrap',
-                            transform: 'translateY(-50%) translateX(-100%)'
-                        }}
-                        transform={false}
-                        sprite={false}
-                    >
-                        <div style={{
-                            fontSize: '13px',
-                            fontWeight: 'bold',
-                            color: labelData.color,
-                            textShadow: '0 0 3px white, 0 0 3px white, 0 0 3px white, 0 0 3px white',
-                            userSelect: 'none',
-                            lineHeight: 1
-                        }}>
-                            {labelData.text} ({labelData.count})
-                        </div>
-                    </Html>
-                </group>
-            )}
         </group>
     )
 }
@@ -1285,7 +1566,7 @@ function CentralAltitudeScale({ minAlt = 0, maxAlt = 18000, airspaces = [] }: {
     )
 }
 
-export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevationCellsChange, hasAirspace = false, airspacesAtPoint = [], isExpanded = false, onToggleExpand }: AirspaceCylinderProps) {
+export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevationCellsChange, hasAirspace = false, airspacesAtPoint = [], isExpanded = false, onToggleExpand, selectedBasemap = 'topographic' }: AirspaceCylinderProps) {
     const [mounted, setMounted] = useState(false)
     const [elevationCells, setElevationCells] = useState<ElevationCell[]>([])
     const [isLoading, setIsLoading] = useState(false)
@@ -1293,6 +1574,37 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
     const [maxElev, setMaxElev] = useState(100)
     const [thermalHotspots, setThermalHotspots] = useState<ThermalHotspot[]>([])
     const [currentGridSize, setCurrentGridSize] = useState(6)
+    const [cellColors, setCellColors] = useState<Record<string, [number, number, number]>>({})
+
+    // Calculate the center elevation (elevation at the clicked point, which is x=0, z=0)
+    const centerElevation = useMemo(() => {
+        if (elevationCells.length === 0) return minElev
+        
+        // Find the cell closest to the center (0, 0)
+        let closestCell = elevationCells[0]
+        let closestDist = Math.sqrt(closestCell.x ** 2 + closestCell.z ** 2)
+        
+        for (const cell of elevationCells) {
+            const dist = Math.sqrt(cell.x ** 2 + cell.z ** 2)
+            if (dist < closestDist) {
+                closestDist = dist
+                closestCell = cell
+            }
+        }
+        
+        return closestCell.elevation ?? minElev
+    }, [elevationCells, minElev])
+
+    // Debug logging
+    useEffect(() => {
+        console.log('[AirspaceCylinder] Props received:', {
+            clickedPoint,
+            radiusKm,
+            hasAirspace,
+            airspacesAtPointCount: airspacesAtPoint.length,
+            isExpanded
+        })
+    }, [clickedPoint, radiusKm, hasAirspace, airspacesAtPoint, isExpanded])
 
     useEffect(() => {
         setMounted(true)
@@ -1379,17 +1691,15 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
             }
 
             try {
-                const requestBody = {
-                    locations: cellRequests.map(c => ({ latitude: c.lat, longitude: c.lon }))
-                }
+                // Use local elevation API which has better error handling
+                const points = cellRequests.map(c => ({ lat: c.lat, lon: c.lon }))
                 
-                const response = await fetch('https://api.open-elevation.com/api/v1/lookup', {
+                const response = await fetch('/api/elevation', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Accept': 'application/json'
                     },
-                    body: JSON.stringify(requestBody)
+                    body: JSON.stringify({ points })
                 })
                 
                 if (!response.ok) {
@@ -1397,40 +1707,84 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
                 }
                 
                 const data = await response.json()
-                console.log('[AirspaceCylinder] Received', data?.results?.length, 'elevation results')
+                console.log('[AirspaceCylinder] API response received, results count:', data?.results?.length)
                 
-                if (data?.results?.length > 0) {
-                    const cells: ElevationCell[] = []
+                // API returns { results: [{ elevation: number }, ...] }
+                const results = data?.results
+                if (results && results.length > 0) {
+                    // Verify results count matches request count
+                    if (results.length !== cellRequests.length) {
+                        console.error(`[AirspaceCylinder] MISMATCH: Requested ${cellRequests.length} points, got ${results.length} results!`)
+                    }
+                    
+                    // First pass: collect valid elevations and calculate average
+                    let validSum = 0
+                    let validCount = 0
                     let min = Infinity
                     let max = -Infinity
-                    let validCount = 0
                     
-                    for (let i = 0; i < data.results.length; i++) {
-                        const result = data.results[i]
-                        const hasElevation = result && typeof result.elevation === 'number'
-                        const elev = hasElevation ? result.elevation : 0
-                        
-                        cells.push({
-                            x: cellRequests[i].x,
-                            z: cellRequests[i].z,
-                            lat: cellRequests[i].lat,
-                            lon: cellRequests[i].lon,
-                            elevation: elev
-                        })
-                        
-                        if (hasElevation) {
+                    for (let i = 0; i < results.length; i++) {
+                        const result = results[i]
+                        const elev = result?.elevation
+                        if (typeof elev === 'number' && elev !== null) {
+                            validSum += elev
                             validCount++
                             if (elev < min) min = elev
                             if (elev > max) max = elev
                         }
                     }
                     
-                    console.log('[AirspaceCylinder] Valid elevation count:', validCount, '/', data.results.length)
-                    console.log('[AirspaceCylinder] Elevation range:', min, 'to', max)
+                    // Use average elevation for cells that failed to fetch (avoids blue "ocean" for mountains)
+                    const avgElev = validCount > 0 ? validSum / validCount : 0
+                    
+                    // Second pass: build cells with fallback to average
+                    const cells: ElevationCell[] = []
+                    let oceanCount = 0
+                    let negativeCount = 0
+                    let nullCount = 0
+                    
+                    for (let i = 0; i < results.length; i++) {
+                        const result = results[i]
+                        const elev = result?.elevation
+                        const hasElevation = typeof elev === 'number' && elev !== null
+                        // Use average elevation for failed cells instead of 0
+                        const elevValue = hasElevation ? elev : avgElev
+                        
+                        // Track suspicious values
+                        if (!hasElevation) nullCount++
+                        if (elevValue <= 0) oceanCount++
+                        if (elevValue < 0) negativeCount++
+                        
+                        cells.push({
+                            x: cellRequests[i].x,
+                            z: cellRequests[i].z,
+                            lat: cellRequests[i].lat,
+                            lon: cellRequests[i].lon,
+                            elevation: elevValue
+                        })
+                    }
+                    
+                    console.log('[AirspaceCylinder] Valid elevation count:', validCount, '/', results.length)
+                    console.log('[AirspaceCylinder] Null/failed cells:', nullCount, '(using avg:', avgElev.toFixed(0), 'm)')
+                    console.log('[AirspaceCylinder] Elevation range:', min, 'to', max, 'meters')
+                    console.log('[AirspaceCylinder] Ocean/zero cells:', oceanCount, ', Negative cells:', negativeCount)
+                    
+                    // Log a few sample cells to verify lat/lon -> elevation mapping
+                    const centerCell = cells.find(c => Math.abs(c.x) < 0.3 && Math.abs(c.z) < 0.3)
+                    if (centerCell) {
+                        console.log(`[AirspaceCylinder] Center cell: (${centerCell.lat.toFixed(5)}, ${centerCell.lon.toFixed(5)}) = ${centerCell.elevation}m`)
+                    }
+                    const edgeCells = cells.filter(c => Math.sqrt(c.x*c.x + c.z*c.z) > 1.2).slice(0, 3)
+                    edgeCells.forEach((c, i) => {
+                        console.log(`[AirspaceCylinder] Edge cell ${i}: (${c.lat.toFixed(5)}, ${c.lon.toFixed(5)}) = ${c.elevation}m`)
+                    })
                     
                     if (validCount > 0) {
                         setMinElev(min)
                         setMaxElev(max)
+                    } else {
+                        setMinElev(0)
+                        setMaxElev(100)
                     }
                     setElevationCells(cells)
                     
@@ -1443,11 +1797,32 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
                         )
                     }
                 } else {
-                    console.error('[AirspaceCylinder] No results in API response')
+                    console.warn('[AirspaceCylinder] No results in API response, using fallback')
+                    // Still show something even if no elevation data
+                    const fallbackCells: ElevationCell[] = cellRequests.map(c => ({
+                        x: c.x,
+                        z: c.z,
+                        lat: c.lat,
+                        lon: c.lon,
+                        elevation: 0
+                    }))
+                    setElevationCells(fallbackCells)
+                    setMinElev(0)
+                    setMaxElev(100)
                 }
             } catch (err) {
                 console.error('[AirspaceCylinder] Failed to fetch elevation:', err)
-                setElevationCells([])
+                // Keep placeholder cells but mark them with 0 elevation so the view still works
+                const fallbackCells: ElevationCell[] = cellRequests.map(c => ({
+                    x: c.x,
+                    z: c.z,
+                    lat: c.lat,
+                    lon: c.lon,
+                    elevation: 0  // Use 0 instead of null for failed requests
+                }))
+                setElevationCells(fallbackCells)
+                setMinElev(0)
+                setMaxElev(100)
             } finally {
                 setIsLoading(false)
             }
@@ -1455,6 +1830,129 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
 
         fetchElevationGrid()
     }, [clickedPoint?.lat, clickedPoint?.lon, radiusKm])
+
+    // Fetch basemap colors for cells - TEMPORARILY DISABLED FOR DEBUGGING
+    useEffect(() => {
+        if (!clickedPoint || elevationCells.length === 0) {
+            return
+        }
+
+        // Skip basemap color fetching for now to test if Canvas renders
+        console.log('[AirspaceCylinder] Basemap color fetching disabled for debugging')
+        return
+
+        const fetchBasemapColors = async () => {
+            const tileUrlTemplate = BASEMAP_URLS[selectedBasemap] || BASEMAP_URLS['topographic']
+            
+            // Determine zoom level based on radius (higher zoom = more detail)
+            const zoom = radiusKm <= 1 ? 15 : radiusKm <= 2 ? 14 : radiusKm <= 5 ? 13 : 12
+            
+            console.log(`[AirspaceCylinder] Fetching basemap colors from ${selectedBasemap} at zoom ${zoom}`)
+            
+            // Group cells by their tile coordinates
+            const tileToPixels: Map<string, { x: number; y: number; cells: { lat: number; lon: number; pixelX: number; pixelY: number }[] }> = new Map()
+            
+            for (const cell of elevationCells) {
+                const tileInfo = latLonToTile(cell.lat, cell.lon, zoom)
+                const tileKey = `${tileInfo.x},${tileInfo.y}`
+                
+                if (!tileToPixels.has(tileKey)) {
+                    tileToPixels.set(tileKey, { x: tileInfo.x, y: tileInfo.y, cells: [] })
+                }
+                tileToPixels.get(tileKey)!.cells.push({
+                    lat: cell.lat,
+                    lon: cell.lon,
+                    pixelX: tileInfo.pixelX,
+                    pixelY: tileInfo.pixelY
+                })
+            }
+            
+            console.log(`[AirspaceCylinder] Need to fetch ${tileToPixels.size} tiles`)
+            
+            const newColors: Record<string, [number, number, number]> = {}
+            
+            // Fetch each tile and sample colors
+            const tilePromises = Array.from(tileToPixels.entries()).map(async ([tileKey, tileData]) => {
+                const tileUrl = tileUrlTemplate
+                    .replace('{z}', zoom.toString())
+                    .replace('{x}', tileData.x.toString())
+                    .replace('{y}', tileData.y.toString())
+                    .replace('{r}', '')  // For retina tiles
+                
+                try {
+                    const img = new Image()
+                    img.crossOrigin = 'anonymous'
+                    
+                    await new Promise<void>((resolve, reject) => {
+                        img.onload = () => resolve()
+                        img.onerror = (e) => reject(e)
+                        img.src = tileUrl
+                    })
+                    
+                    // Draw to canvas to read pixels
+                    const canvas = document.createElement('canvas')
+                    canvas.width = 256
+                    canvas.height = 256
+                    const ctx = canvas.getContext('2d')
+                    if (!ctx) return
+                    
+                    ctx.drawImage(img, 0, 0)
+                    
+                    // Sample color for each cell in this tile
+                    for (const cellInfo of tileData.cells) {
+                        const px = Math.min(255, Math.max(0, cellInfo.pixelX))
+                        const py = Math.min(255, Math.max(0, cellInfo.pixelY))
+                        
+                        // Sample a small area around the pixel to get dominant color
+                        const sampleSize = 3
+                        const colorCounts: Map<string, { count: number; r: number; g: number; b: number }> = new Map()
+                        
+                        for (let dx = -sampleSize; dx <= sampleSize; dx++) {
+                            for (let dy = -sampleSize; dy <= sampleSize; dy++) {
+                                const sx = Math.min(255, Math.max(0, px + dx))
+                                const sy = Math.min(255, Math.max(0, py + dy))
+                                const imageData = ctx.getImageData(sx, sy, 1, 1).data
+                                
+                                // Quantize color to reduce variations
+                                const r = Math.round(imageData[0] / 16) * 16
+                                const g = Math.round(imageData[1] / 16) * 16
+                                const b = Math.round(imageData[2] / 16) * 16
+                                const colorKey = `${r},${g},${b}`
+                                
+                                if (!colorCounts.has(colorKey)) {
+                                    colorCounts.set(colorKey, { count: 0, r: imageData[0], g: imageData[1], b: imageData[2] })
+                                }
+                                colorCounts.get(colorKey)!.count++
+                            }
+                        }
+                        
+                        // Find most common color
+                        let maxCount = 0
+                        let dominantColor: { r: number; g: number; b: number } = { r: 128, g: 128, b: 128 }
+                        
+                        for (const [, colorInfo] of colorCounts) {
+                            if (colorInfo.count > maxCount) {
+                                maxCount = colorInfo.count
+                                dominantColor = colorInfo
+                            }
+                        }
+                        
+                        const key = `${cellInfo.lat.toFixed(4)},${cellInfo.lon.toFixed(4)}`
+                        newColors[key] = [dominantColor.r / 255, dominantColor.g / 255, dominantColor.b / 255]
+                    }
+                } catch (err) {
+                    console.warn(`[AirspaceCylinder] Failed to fetch tile ${tileKey}:`, err)
+                }
+            })
+            
+            await Promise.all(tilePromises)
+            
+            console.log(`[AirspaceCylinder] Sampled colors for ${Object.keys(newColors).length} cells`)
+            setCellColors(newColors)
+        }
+
+        fetchBasemapColors()
+    }, [elevationCells, selectedBasemap, clickedPoint?.lat, clickedPoint?.lon, radiusKm])
 
     // Fetch thermal hotspots from thermal.kk7.ch tiles
     useEffect(() => {
@@ -1696,51 +2194,62 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
         </button>
     )
     
-    // The 3D canvas content
-    const CanvasContent = () => (
-        <>
-            <color attach="background" args={['#ffffff']} />
-                    <ambientLight intensity={0.5} />
-                    <pointLight position={[10, 10, 10]} />
+    // Prepare deduplicated airspace labels for external display
+    // Group by airspace type (same color) and show the overall altitude range
+    const airspaceLabels = useMemo(() => {
+        const labelMap = new Map<string, {
+            key: string,
+            type: string,
+            color: string,
+            floorM: number,   // Lowest floor among all of this type
+            ceilingM: number, // Highest ceiling among all of this type
+            count: number,    // How many individual airspaces of this type
+        }>()
+        
+        airspacesAtPoint.forEach((airspace, idx) => {
+            const floor = airspace.altitude?.floor || 0
+            const ceiling = airspace.altitude?.ceiling || 18000
+            const color = getAirspaceColor(airspace.type)
+            const floorM = Math.round(floor / 3.28084)
+            const ceilingM = Math.round(ceiling / 3.28084)
             
-            <CylinderWalls />
+            // Group by type only (same color = same group)
+            const typeKey = airspace.type
             
-            <ElevationMosaic cells={elevationCells} minElev={minElev} maxElev={maxElev} isLoading={isLoading} gridSize={currentGridSize} radiusKm={radiusKm} />
-            
-            {/* Thermal hotspots */}
-            <ThermalHotspots hotspots={thermalHotspots} />
-            
-            <RadiusLabel radiusKm={radiusKm} />
-            
-            <NorthIndicator />
-            {hasAirspace && <CentralAltitudeScale minAlt={0} maxAlt={18000} airspaces={airspacesAtPoint} />}
-            {airspacesAtPoint.length > 0 && clickedPoint && (
-                <AirspaceVolumes 
-                    airspaces={airspacesAtPoint} 
-                    minAlt={0} 
-                    maxAlt={18000}
-                    clickedPoint={clickedPoint}
-                    radiusKm={radiusKm}
-                />
-            )}
-            
-                    <OrbitControls
-                enablePan={true}
-                        enableZoom={true}
-                enableRotate={true}
-                minPolarAngle={Math.PI / 4}
-                maxPolarAngle={Math.PI / 2}
-                screenSpacePanning={true}
-                panSpeed={0.5}
-                rotateSpeed={0.8}
-                mouseButtons={{
-                    LEFT: MOUSE.ROTATE,
-                    MIDDLE: MOUSE.DOLLY,
-                    RIGHT: MOUSE.PAN
-                }}
-            />
-        </>
-    )
+            if (labelMap.has(typeKey)) {
+                const existing = labelMap.get(typeKey)!
+                existing.count++
+                // Expand the altitude range to encompass all airspaces of this type
+                existing.floorM = Math.min(existing.floorM, floorM)
+                existing.ceilingM = Math.max(existing.ceilingM, ceilingM)
+            } else {
+                labelMap.set(typeKey, {
+                    key: airspace.id || `label-${idx}`,
+                    type: airspace.type,
+                    color,
+                    floorM,
+                    ceilingM,
+                    count: 1,
+                })
+            }
+        })
+        
+        // Sort by ceiling altitude (highest first)
+        return Array.from(labelMap.values()).sort((a, b) => b.ceilingM - a.ceilingM)
+    }, [airspacesAtPoint])
+    
+    // Calculate max airspace ceiling in meters for display
+    const maxAirspaceCeiling = useMemo(() => {
+        let maxCeiling = 0
+        for (const airspace of airspacesAtPoint) {
+            const ceiling = airspace.altitude?.ceiling || 18000
+            const ceilingM = Math.round(ceiling / 3.28084)
+            if (ceilingM > maxCeiling) {
+                maxCeiling = ceilingM
+            }
+        }
+        return maxCeiling
+    }, [airspacesAtPoint])
     
     if (!mounted) {
         return (
@@ -1755,9 +2264,9 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
         )
     }
     
-    // Expanded fullscreen view
+    // Expanded fullscreen view - use portal to escape sidebar's stacking context
     if (isExpanded) {
-        return (
+        const expandedContent = (
             <div style={{
                 position: 'fixed',
                 top: 0,
@@ -1765,9 +2274,10 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
                 right: 0,
                 bottom: 0,
                 backgroundColor: '#ffffff',
-                zIndex: 9999,
+                zIndex: 99999,
                 display: 'flex',
-                flexDirection: 'column'
+                flexDirection: 'column',
+                isolation: 'isolate'
             }}>
                 {/* Header */}
                 <div style={{
@@ -1805,45 +2315,165 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
                 </div>
                 
                 {/* Canvas container */}
-                <div style={{ flex: 1, position: 'relative' }}>
-                    <Canvas camera={{ position: [0, 0, 8], fov: 50 }} gl={{ stencil: true }}>
-                        <CanvasContent />
-                    </Canvas>
+                <div style={{ flex: 1, position: 'relative', overflow: 'hidden', display: 'flex' }}>
+                    <div style={{ flex: 1, position: 'relative' }}>
+                        <Canvas 
+                            camera={{ position: [0, 0, 8], fov: 50, near: 0.1, far: 100 }} 
+                            gl={{ 
+                                stencil: true, 
+                                antialias: false, 
+                                powerPreference: 'high-performance',
+                                alpha: true
+                            }}
+                            dpr={1}
+                        >
+                            <color attach="background" args={['#f8fafc']} />
+                            <ambientLight intensity={0.6} />
+                            <directionalLight position={[5, 8, 5]} intensity={0.6} />
+                            <directionalLight position={[-4, 6, -2]} intensity={0.3} />
+                            <CylinderWalls />
+                            {elevationCells.length > 0 && (
+                                <ElevationMosaic 
+                                    cells={elevationCells} 
+                                    minElev={minElev} 
+                                    maxElev={maxElev} 
+                                    isLoading={isLoading} 
+                                    gridSize={currentGridSize} 
+                                    radiusKm={radiusKm}
+                                    airspaces={airspacesAtPoint}
+                                    cellColors={cellColors}
+                                />
+                            )}
+                            {thermalHotspots.length > 0 && (
+                                <ThermalHotspots hotspots={thermalHotspots} />
+                            )}
+                            <RadiusLabel radiusKm={radiusKm} />
+                            <NorthIndicator />
+                            {elevationCells.length > 0 && (
+                                <ClickPositionMarker 
+                                    centerElevation={centerElevation} 
+                                    minElev={minElev} 
+                                    maxElev={maxElev} 
+                                    airspaces={airspacesAtPoint} 
+                                />
+                            )}
+                            {elevationCells.length > 0 && (
+                                <ElevationScaleBar minElev={minElev} maxElev={maxElev} airspaces={airspacesAtPoint} />
+                            )}
+                            {airspacesAtPoint.length > 0 && clickedPoint && (
+                                <AirspaceVolumes 
+                                    airspaces={airspacesAtPoint} 
+                                    minElev={minElev}
+                                    maxElev={maxElev}
+                                    clickedPoint={clickedPoint}
+                                    radiusKm={radiusKm}
+                                />
+                            )}
+                            <OrbitControls
+                                makeDefault
+                                enablePan={true}
+                                enableZoom={true}
+                                enableRotate={true}
+                                enableDamping={true}
+                                dampingFactor={0.12}
+                                minPolarAngle={Math.PI / 4}
+                                maxPolarAngle={Math.PI / 2}
+                                screenSpacePanning={true}
+                                panSpeed={0.8}
+                                rotateSpeed={1.0}
+                                zoomSpeed={1.0}
+                                mouseButtons={{
+                                    LEFT: MOUSE.ROTATE,
+                                    MIDDLE: MOUSE.DOLLY,
+                                    RIGHT: MOUSE.PAN
+                                }}
+                            />
+                        </Canvas>
+                        
+                        {isLoading && (
+                            <div style={{ 
+                                position: 'absolute', 
+                                bottom: '16px', 
+                                left: '16px', 
+                                fontSize: '13px', 
+                                color: '#6b7280',
+                                backgroundColor: 'rgba(255,255,255,0.95)',
+                                padding: '8px 12px',
+                                borderRadius: '6px',
+                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                            }}>
+                                Loading terrain...
+                            </div>
+                        )}
+                        
+                        {elevationCells.length > 0 && (
+                            <div style={{ 
+                                position: 'absolute', 
+                                bottom: '16px', 
+                                left: '50%',
+                                transform: 'translateX(-50%)',
+                                fontSize: '12px', 
+                                color: '#6b7280',
+                                backgroundColor: 'rgba(255,255,255,0.95)',
+                                padding: '8px 12px',
+                                borderRadius: '6px',
+                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                textAlign: 'center',
+                                lineHeight: '1.4'
+                            }}>
+                                <div>Terrain elevation range: {Math.round(minElev)}m - {Math.round(maxElev)}m</div>
+                                {maxAirspaceCeiling > 0 && (
+                                    <div>Max airspace found: {maxAirspaceCeiling}m</div>
+                                )}
+                            </div>
+                        )}
+                    </div>
                     
-                    {isLoading && (
+                    {/* External labels panel */}
+                    {airspaceLabels.length > 0 && (
                         <div style={{ 
-                            position: 'absolute', 
-                            bottom: '16px', 
-                            left: '16px', 
-                            fontSize: '13px', 
-                            color: '#6b7280',
-                            backgroundColor: 'rgba(255,255,255,0.95)',
-                            padding: '8px 12px',
-                            borderRadius: '6px',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                            width: '140px', 
+                            flexShrink: 0,
+                            padding: '12px',
+                            backgroundColor: '#f9fafb',
+                            borderLeft: '1px solid #e5e7eb',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '6px',
+                            overflowY: 'auto'
                         }}>
-                            Loading terrain...
-                        </div>
-                    )}
-                    
-                    {elevationCells.length > 0 && (
-                        <div style={{ 
-                            position: 'absolute', 
-                            bottom: '16px', 
-                            right: '16px', 
-                            fontSize: '12px', 
-                            color: '#6b7280',
-                            backgroundColor: 'rgba(255,255,255,0.95)',
-                            padding: '8px 12px',
-                            borderRadius: '6px',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                        }}>
-                            Elevation: {Math.round(minElev)}m - {Math.round(maxElev)}m
+                                {airspaceLabels.map((label) => (
+                                <div
+                                    key={label.key}
+                                    style={{
+                                        padding: '8px',
+                                        backgroundColor: `${label.color}15`,
+                                        border: `1px solid ${label.color}40`,
+                                        borderRadius: '6px',
+                                        fontSize: '11px',
+                                        lineHeight: '1.4'
+                                    }}
+                                >
+                                    <div style={{ 
+                                        fontWeight: '600', 
+                                        color: label.color,
+                                        marginBottom: '2px'
+                                    }}>
+                                        {label.type}
+                                    </div>
+                                    <div style={{ color: '#6b7280', fontSize: '10px' }}>
+                                        {label.floorM}-{label.ceilingM}m
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     )}
                 </div>
             </div>
         )
+        
+        // Render via portal to escape sidebar's stacking context
+        return createPortal(expandedContent, document.body)
     }
 
     // Normal compact view
@@ -1853,41 +2483,163 @@ export default function AirspaceCylinder({ clickedPoint, radiusKm = 1, onElevati
                 3D Airspace View
             </h3>
 
-            <div style={{ position: 'relative', height: '300px', width: '100%', backgroundColor: '#ffffff', borderRadius: '8px', overflow: 'hidden', border: '1px solid #e5e7eb' }}>
-                <Canvas camera={{ position: [0, 0, 8], fov: 50 }} gl={{ stencil: true }}>
-                    <CanvasContent />
-                </Canvas>
-                
-                {onToggleExpand && <ExpandButton />}
-                
-                {isLoading && (
-                    <div style={{ 
-                        position: 'absolute', 
-                        bottom: '8px', 
-                        left: '8px', 
-                        fontSize: '11px', 
-                        color: '#6b7280',
-                        backgroundColor: 'rgba(255,255,255,0.9)',
-                        padding: '4px 8px',
-                        borderRadius: '4px'
-                    }}>
-                        Loading terrain...
-            </div>
-                )}
-                
-                {elevationCells.length > 0 && (
-                    <div style={{ 
-                        position: 'absolute', 
-                        bottom: '8px', 
-                        right: '8px', 
-                        fontSize: '10px', 
-                        color: '#6b7280',
-                        backgroundColor: 'rgba(255,255,255,0.9)',
-                        padding: '4px 8px',
-                        borderRadius: '4px'
-                    }}>
-                        {Math.round(minElev)}m - {Math.round(maxElev)}m
+            <div style={{ display: 'flex', height: '300px', width: '100%', backgroundColor: '#f0f0f0', borderRadius: '8px', overflow: 'visible' }}>
+                <div style={{ flex: 1, minWidth: 0, position: 'relative', overflow: 'hidden', borderRadius: '5px 0 0 5px', backgroundColor: '#e0e0e0' }}>
+                    <Canvas 
+                        camera={{ position: [0, 0, 8], fov: 50, near: 0.1, far: 100 }} 
+                        gl={{ 
+                            stencil: true, 
+                            antialias: false,
+                            powerPreference: 'high-performance',
+                            alpha: false,
+                            failIfMajorPerformanceCaveat: false
+                        }}
+                        dpr={1}
+                        style={{ background: '#f8fafc' }}
+                    >
+                        <color attach="background" args={['#f8fafc']} />
+                        <ambientLight intensity={0.6} />
+                        <directionalLight position={[5, 8, 5]} intensity={0.6} />
+                        <directionalLight position={[-4, 6, -2]} intensity={0.3} />
+                        
+                        <CylinderWalls />
+                        {elevationCells.length > 0 && (
+                            <ElevationMosaic 
+                                cells={elevationCells} 
+                                minElev={minElev} 
+                                maxElev={maxElev} 
+                                isLoading={isLoading} 
+                                gridSize={currentGridSize} 
+                                radiusKm={radiusKm}
+                                airspaces={airspacesAtPoint}
+                                cellColors={cellColors}
+                            />
+                        )}
+                        {thermalHotspots.length > 0 && (
+                            <ThermalHotspots hotspots={thermalHotspots} />
+                        )}
+                        <RadiusLabel radiusKm={radiusKm} />
+                        <NorthIndicator />
+                        {elevationCells.length > 0 && (
+                            <ClickPositionMarker 
+                                centerElevation={centerElevation} 
+                                minElev={minElev} 
+                                maxElev={maxElev} 
+                                airspaces={airspacesAtPoint} 
+                            />
+                        )}
+                        {elevationCells.length > 0 && (
+                            <ElevationScaleBar minElev={minElev} maxElev={maxElev} airspaces={airspacesAtPoint} />
+                        )}
+                        {airspacesAtPoint.length > 0 && clickedPoint && (
+                            <AirspaceVolumes 
+                                airspaces={airspacesAtPoint} 
+                                minElev={minElev}
+                                maxElev={maxElev}
+                                clickedPoint={clickedPoint}
+                                radiusKm={radiusKm}
+                            />
+                        )}
+                        <OrbitControls
+                            makeDefault
+                            enablePan={true}
+                            enableZoom={true}
+                            enableRotate={true}
+                            enableDamping={true}
+                            dampingFactor={0.12}
+                            minPolarAngle={Math.PI / 4}
+                            maxPolarAngle={Math.PI / 2}
+                            screenSpacePanning={true}
+                            panSpeed={0.8}
+                            rotateSpeed={1.0}
+                            zoomSpeed={1.0}
+                            mouseButtons={{
+                                LEFT: MOUSE.ROTATE,
+                                MIDDLE: MOUSE.DOLLY,
+                                RIGHT: MOUSE.PAN
+                            }}
+                        />
+                    </Canvas>
+                    
+                    {onToggleExpand && <ExpandButton />}
+                    
+                    {isLoading && (
+                        <div style={{ 
+                            position: 'absolute', 
+                            bottom: '8px', 
+                            left: '8px', 
+                            fontSize: '11px', 
+                            color: '#6b7280',
+                            backgroundColor: 'rgba(255,255,255,0.9)',
+                            padding: '4px 8px',
+                            borderRadius: '4px'
+                        }}>
+                            Loading terrain...
+                        </div>
+                    )}
+                    
+                    {elevationCells.length > 0 && (
+                        <div style={{ 
+                            position: 'absolute', 
+                            bottom: '8px', 
+                            right: '8px', 
+                            fontSize: '9px', 
+                            color: '#6b7280',
+                            backgroundColor: 'rgba(255,255,255,0.9)',
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            textAlign: 'right',
+                            lineHeight: '1.3'
+                        }}>
+                            <div>Terrain: {Math.round(minElev)}m - {Math.round(maxElev)}m</div>
+                            {maxAirspaceCeiling > 0 && (
+                                <div>Max airspace: {maxAirspaceCeiling}m</div>
+                            )}
+                        </div>
+                    )}
                 </div>
+                
+                {/* External labels panel */}
+                {airspaceLabels.length > 0 && (
+                    <div style={{ 
+                        width: '100px', 
+                        minWidth: '100px',
+                        flexShrink: 0,
+                        padding: '6px',
+                        backgroundColor: '#f9fafb',
+                        borderLeft: '1px solid #e5e7eb',
+                        borderRadius: '0 8px 8px 0',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '4px',
+                        overflowY: 'auto'
+                    }}>
+                        {airspaceLabels.map((label) => (
+                            <div
+                                key={label.key}
+                                style={{
+                                    padding: '4px 5px',
+                                    backgroundColor: `${label.color}15`,
+                                    border: `1px solid ${label.color}40`,
+                                    borderRadius: '4px',
+                                    fontSize: '9px',
+                                    lineHeight: '1.3'
+                                }}
+                            >
+                                <div style={{ 
+                                    fontWeight: '600', 
+                                    color: label.color,
+                                    marginBottom: '1px',
+                                    wordBreak: 'break-word'
+                                }}>
+                                    {label.type}
+                                </div>
+                                <div style={{ color: '#6b7280', fontSize: '8px' }}>
+                                    {label.floorM}-{label.ceilingM}m
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 )}
             </div>
         </div>

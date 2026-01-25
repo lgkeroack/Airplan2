@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Update MapContainer dragging prop",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-Command",
+				"$content = Get-Content -Raw 'app\\components\\AirspaceMap.tsx'; $updated = $content -replace '(scrollWheelZoom=\\{true\\}[\\s\\S]*?)dragging=\\{true\\}','$1dragging={false}'; if ($updated -ne $content) { Set-Content 'app\\components\\AirspaceMap.tsx' $updated }; Write-Host 'Ensured dragging={false} in MapContainer'"
+			],
+			"problemMatcher": []
+		}
+	]
+}

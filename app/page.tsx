@@ -1,17 +1,11 @@
 import { Suspense } from 'react'
-import dynamic from 'next/dynamic'
 import { loadAirspaceData } from '@/lib/load-airspace-data'
-import Loading from './loading'
 import ErrorBoundary from './components/ErrorBoundary'
 import ClientErrorCatcher from './components/ClientErrorCatcher'
 import ConsoleLogger from './components/ConsoleLogger'
 import PageDebugger from './components/PageDebugger'
+import AirspaceMapLoader from './components/AirspaceMapLoader'
 import { serverLogger } from '@/lib/server-logger'
-
-// Dynamically import the map component to disable SSR (Leaflet requires browser APIs)
-const AirspaceMap = dynamic(() => import('./components/AirspaceMap'), {
-  ssr: false,
-})
 
 async function AirspaceDataLoader() {
   // Load and parse airspace data server-side (returns parsed data, not file contents)
@@ -75,7 +69,7 @@ async function MapWithData() {
     serverLogger.log(`[Server] MapWithData: Data loaded, rendering map with ${airspaceData.length} entries`)
     console.log('[Server] MapWithData: Data loaded, rendering map with', airspaceData.length, 'entries')
     
-    return <AirspaceMap initialData={airspaceData} />
+    return <AirspaceMapLoader initialData={airspaceData} />
   } catch (error: any) {
     serverLogger.error('[Server] MapWithData: Error caught', error)
     console.error('[Server] MapWithData: Error caught:', error)
@@ -92,7 +86,7 @@ export default function Home() {
       <PageDebugger />
       <main style={{ position: 'relative', height: '100vh', width: '100vw', overflow: 'hidden', backgroundColor: '#111827' }}>
         <ErrorBoundary>
-          <Suspense fallback={<Loading />}>
+          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#fff' }}>Loading map...</div>}>
             <MapWithData />
           </Suspense>
         </ErrorBoundary>
