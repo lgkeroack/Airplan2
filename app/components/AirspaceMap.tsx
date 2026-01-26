@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, useId } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Circle, Polyline, Polygon } from 'react-leaflet'
-import { DivIcon, LatLngExpression } from 'leaflet'
+import L, { DivIcon, LatLngExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import SidePanel from './SidePanel'
 import { findAirspacesAtPoint, findAirspacesNearby } from '@/lib/point-in-airspace'
