@@ -1,8 +1,8 @@
 'use client'
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, useId } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Circle, Polyline, Polygon } from 'react-leaflet'
-import { DivIcon, LatLngExpression } from 'leaflet'
+import { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap, Circle, Polyline, Polygon } from 'react-leaflet'
+import L, { DivIcon, LatLngExpression, Map as LeafletMap } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import SidePanel from './SidePanel'
 import { findAirspacesAtPoint, findAirspacesNearby } from '@/lib/point-in-airspace'
@@ -33,6 +33,13 @@ export interface RoutePoint {
   lat: number
   lon: number
   ele?: number
+}
+
+interface Layer {
+  id: string
+  name: string
+  visible: boolean
+  opacity: number
 }
 
 // Calculate distance between two points in meters
@@ -341,12 +348,45 @@ function getRoutePointAtDistance(
   distanceKm: number
 ): { lat: number; lon: number } | null {
   if (route.length < 2) return null
-  
+
   // Calculate distance between two points in km
   const distanceKmBetween = (p1: { lat: number; lon: number }, p2: { lat: number; lon: number }): number => {
     const dx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
     const dy = (p2.lat - p1.lat) * 111
     return Math.sqrt(dx * dx + dy * dy)
+  }
+
+  let accumulated = 0
+  for (let i = 0; i < route.length - 1; i++) {
+    const segmentDist = distanceKmBetween(route[i], route[i + 1])
+    if (accumulated + segmentDist >= distanceKm) {
+      const ratio = (distanceKm - accumulated) / segmentDist
+      return {
+        lat: route[i].lat + ratio * (route[i + 1].lat - route[i].lat),
+        lon: route[i].lon + ratio * (route[i + 1].lon - route[i].lon)
+      }
+    }
+    accumulated += segmentDist
+  }
+  return route[route.length - 1]
+}
+
+// Get color for airspace type
+function getAirspaceColor(type: string): string {
+  const colors: Record<string, string> = {
+    'Class A': '#ef4444',
+    'Class B': '#3b82f6',
+    'Class C': '#8b5cf6',
+    'Class D': '#06b6d4',
+    'Class E': '#22c55e',
+    'Class G': '#84cc16',
+    'Restricted': '#f97316',
+    'Prohibited': '#dc2626',
+    'Warning': '#eab308',
+    'MOA': '#a855f7',
+    'TFR': '#ef4444',
+    'Alert': '#f59e0b',
+    'National Park': '#15803d',
   }
 
   // Try to match partial names if exact match fails
@@ -436,9 +476,75 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     return initialData
   })
   const [uploadedFiles, setUploadedFiles] = useState<Array<{ id: string; name: string; data: AirspaceData[] }>>([])
+
+  // Combine all airspace data sources
+  const allAirspaces = useMemo(() => {
+    const all = [...airspaceData]
+    uploadedFiles.forEach(file => {
+      all.push(...file.data)
+    })
+    return all
+  }, [airspaceData, uploadedFiles])
+
+  // Visible airspace types (all enabled by default)
+  const visibleTypes = useMemo(() => {
+    const types = new Set<string>()
+    allAirspaces.forEach(item => types.add(item.type))
+    return types
+  }, [allAirspaces])
+
+  // Hidden airspace classes (Class E hidden by default)
+  const [hiddenAirspaceClasses, setHiddenAirspaceClasses] = useState<Set<string>>(() => new Set(['Class E']))
+
+  // Altitude range filter
+  const [altitudeRange, setAltitudeRange] = useState<{ min: number; max: number }>({ min: 0, max: 60000 })
+
+  // Handler to toggle airspace class visibility
+  const handleAirspaceClassToggle = useCallback((airspaceClass: string) => {
+    setHiddenAirspaceClasses(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(airspaceClass)) {
+        newSet.delete(airspaceClass)
+      } else {
+        newSet.add(airspaceClass)
+      }
+      return newSet
+    })
+  }, [])
+
+  // Helper to check if airspace type is hidden
+  const isAirspaceHidden = useCallback((type: string): boolean => {
+    // Check exact matches first
+    if (hiddenAirspaceClasses.has(type)) return true
+
+    // Check if type contains any hidden class
+    for (const hiddenClass of hiddenAirspaceClasses) {
+      if (hiddenClass === 'Other') {
+        // 'Other' matches anything that's not a standard class
+        const standardClasses = ['Class A', 'Class B', 'Class C', 'Class D', 'Class E', 'Class G', 'Restricted', 'MOA', 'TFR']
+        const isStandard = standardClasses.some(sc => type.includes(sc) || type === sc)
+        if (!isStandard) return true
+      } else if (type.includes(hiddenClass)) {
+        return true
+      }
+    }
+    return false
+  }, [hiddenAirspaceClasses])
+
+  // Helper to check if airspace is within altitude range
+  const isWithinAltitudeRange = useCallback((airspace: AirspaceData): boolean => {
+    const floor = airspace.altitude?.floor ?? 0
+    const ceiling = airspace.altitude?.ceiling ?? 60000
+    // Airspace is visible if any part of it overlaps with the filter range
+    return ceiling >= altitudeRange.min && floor <= altitudeRange.max
+  }, [altitudeRange])
+
+  // Route radius for terrain profile
+  const [routeRadius, setRouteRadius] = useState(5)
+
   // Start with side panel closed and no active tab; center on Squamish, BC
   const [isPanelOpen, setIsPanelOpen] = useState(false)
-  const [sidePanelActiveTab, setSidePanelActiveTab] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings' | null>(null)
+  const [sidePanelActiveTab, setSidePanelActiveTab] = useState<'layers' | 'aircolumn' | 'search' | null>(null)
   const [mapCenter, setMapCenter] = useState<LatLngExpression>([49.7016, -123.1558])
   const [mapZoom, setMapZoom] = useState(10)
   const mapRef = useRef<LeafletMap | null>(null)
@@ -542,6 +648,42 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     { id: 'thermal-skyways', name: 'Thermal Skyways', visible: false, opacity: 0.7 },
     { id: 'thermal-hotspots', name: 'Thermal Hotspots', visible: false, opacity: 0.7 },
   ])
+
+  // Basemap options
+  const basemapOptions = [
+    { id: 'topographic', name: 'Topographic (OpenTopoMap)' },
+    { id: 'openstreetmap', name: 'OpenStreetMap' },
+    { id: 'osm-humanitarian', name: 'Humanitarian (HOT)' },
+    { id: 'cartodb-positron', name: 'Light (CartoDB)' },
+    { id: 'cartodb-dark', name: 'Dark (CartoDB)' },
+    { id: 'cartodb-voyager', name: 'Voyager (CartoDB)' },
+    { id: 'esri-imagery', name: 'Satellite (ESRI)' },
+    { id: 'esri-topo', name: 'Topo (ESRI)' },
+    { id: 'esri-street', name: 'Street (ESRI)' },
+    { id: 'esri-gray', name: 'Light Gray (ESRI)' },
+    { id: 'esri-ocean', name: 'Ocean (ESRI)' },
+    { id: 'esri-natgeo', name: 'National Geographic' },
+    { id: 'stadia-outdoors', name: 'Outdoors (Stadia)' },
+    { id: 'stadia-bright', name: 'Bright (Stadia)' },
+    { id: 'cyclosm', name: 'CyclOSM' },
+  ]
+
+  // Layer handlers
+  const handleLayerToggle = useCallback((layerId: string) => {
+    setLayers(prev => prev.map(layer =>
+      layer.id === layerId ? { ...layer, visible: !layer.visible } : layer
+    ))
+  }, [])
+
+  const handleLayerOpacityChange = useCallback((layerId: string, opacity: number) => {
+    setLayers(prev => prev.map(layer =>
+      layer.id === layerId ? { ...layer, opacity } : layer
+    ))
+  }, [])
+
+  const handleBasemapChange = useCallback((basemapId: string) => {
+    setSelectedBasemap(basemapId)
+  }, [])
 
   // Handle location search
   const handleSearchLocation = useCallback(async (query: string) => {
@@ -685,7 +827,55 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     setClickedPoint(null)
   }, [contextMenu])
 
+  // Handle airspace selection from side panel - frame and highlight on map
+  const handleAirspaceSelect = useCallback((airspaceIds: string | string[]) => {
+    // Set selection for highlighting
+    setSelectedAirspaceId(airspaceIds)
 
+    // Find the airspace(s) and calculate bounds
+    const ids = Array.isArray(airspaceIds) ? airspaceIds : [airspaceIds]
+    const selectedAirspaces = allAirspaces.filter(a => ids.includes(a.id))
+
+    if (selectedAirspaces.length > 0 && mapRef.current) {
+      // Calculate combined bounds
+      let minLat = Infinity, maxLat = -Infinity
+      let minLon = Infinity, maxLon = -Infinity
+
+      selectedAirspaces.forEach(airspace => {
+        // Use pre-calculated bounds if available
+        if (airspace.bounds) {
+          minLat = Math.min(minLat, airspace.bounds.south)
+          maxLat = Math.max(maxLat, airspace.bounds.north)
+          minLon = Math.min(minLon, airspace.bounds.west)
+          maxLon = Math.max(maxLon, airspace.bounds.east)
+        } else if (airspace.polygon && airspace.polygon.length > 0) {
+          // Calculate from polygon
+          airspace.polygon.forEach(coord => {
+            minLat = Math.min(minLat, coord.latitude)
+            maxLat = Math.max(maxLat, coord.latitude)
+            minLon = Math.min(minLon, coord.longitude)
+            maxLon = Math.max(maxLon, coord.longitude)
+          })
+        } else if (airspace.coordinates) {
+          // Use center point with radius
+          const radiusDeg = (airspace.radius || 1) * 1852 / 111000 // Convert NM to degrees
+          minLat = Math.min(minLat, airspace.coordinates.latitude - radiusDeg)
+          maxLat = Math.max(maxLat, airspace.coordinates.latitude + radiusDeg)
+          minLon = Math.min(minLon, airspace.coordinates.longitude - radiusDeg)
+          maxLon = Math.max(maxLon, airspace.coordinates.longitude + radiusDeg)
+        }
+      })
+
+      // Frame the map to show the airspace with padding
+      if (minLat !== Infinity) {
+        const bounds = L.latLngBounds(
+          [minLat, minLon],
+          [maxLat, maxLon]
+        )
+        mapRef.current.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 })
+      }
+    }
+  }, [allAirspaces])
 
   // Route Handlers
   const handleStartMeasurement = useCallback(() => {
@@ -806,12 +996,34 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     return [Number(clickedPoint.lat.toFixed(6)), Number(clickedPoint.lon.toFixed(6))] as LatLngExpression
   }, [clickedPoint])
 
+  // Generate popup content when side panel is open
+  const generatePopupContent = useCallback((lat: number, lon: number) => {
+    return (
+      <div style={{ fontSize: '12px', padding: '4px' }}>
+        <div style={{ fontWeight: 'bold' }}>
+          {lat.toFixed(5)}°, {lon.toFixed(5)}°
+        </div>
+        {elevation !== null && (
+          <div style={{ color: '#3b82f6', marginTop: '2px' }}>
+            {Math.round(elevation * 3.28084)} ft | {elevation} m MSL
+          </div>
+        )}
+      </div>
+    )
+  }, [elevation])
+
   // Memoize airspace layer rendering to prevent re-computation on every render
   const airspaceLayer = useMemo(() => {
-    // Filter airspaces by type and viewport bounds for performance
+    // Filter airspaces by type, hidden classes, altitude range, and viewport bounds
     const filtered = allAirspaces
       .filter(item => {
         if (!visibleTypes.has(item.type)) return false
+
+        // Filter by hidden airspace classes
+        if (isAirspaceHidden(item.type)) return false
+
+        // Filter by altitude range
+        if (!isWithinAltitudeRange(item)) return false
 
         // Skip if no bounds yet
         if (!mapBounds) return true
@@ -922,7 +1134,7 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
 
       return null
     })
-  }, [allAirspaces, visibleTypes, mapBounds, layers, selectedAirspaceId])
+  }, [allAirspaces, visibleTypes, mapBounds, layers, selectedAirspaceId, isAirspaceHidden, isWithinAltitudeRange])
 
   // Memoize allAirspaceData for SidePanel
   const allAirspaceData = useMemo(() => [
@@ -1003,7 +1215,6 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
             zoomControl={false}
             preferCanvas={true}
             closePopupOnClick={false}
-            scrollWheelZoom={true}
             dragging={false}
       >
         <MapInitializer center={mapCenter} zoom={mapZoom} />
@@ -1367,10 +1578,12 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         onToggle={() => {
           const newOpenState = !isPanelOpen
           setIsPanelOpen(newOpenState)
-          // When closing the panel, clear the point and route data
+          // When closing the panel, clear the point, route data, and finished routes
           if (!newOpenState) {
             setClickedPoint(null)
             setSelectedRouteId(null)
+            setFinishedRoutes([])
+            setSelectedAirspaceId(null)
           }
         }}
         layers={layers}
@@ -1389,6 +1602,12 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         }}
         selectedRoute={selectedRouteId && finishedRoutes.length > 0 ? finishedRoutes.find(r => r.id === selectedRouteId) : undefined}
         activeTab={sidePanelActiveTab ?? undefined}
+        selectedAirspaceId={selectedAirspaceId}
+        onAirspaceSelect={handleAirspaceSelect}
+        hiddenAirspaceClasses={hiddenAirspaceClasses}
+        onAirspaceClassToggle={handleAirspaceClassToggle}
+        altitudeRange={altitudeRange}
+        onAltitudeRangeChange={setAltitudeRange}
       />
 
       {/* Route Builder UI */}
