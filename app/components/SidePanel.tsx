@@ -69,7 +69,12 @@ interface SidePanelProps {
   onFetchRadiusChange?: (radius: number) => void
   onElevationCellsChange?: (cells: ElevationCellData[], minElev: number, maxElev: number) => void
   selectedRoute?: RouteData
-  activeTab?: 'layers' | 'files' | 'aircolumn' | 'search' | 'settings'
+  activeTab?: 'layers' | 'aircolumn' | 'search'
+  // Airspace filtering
+  hiddenAirspaceClasses?: Set<string>
+  onAirspaceClassToggle?: (airspaceClass: string) => void
+  altitudeRange?: { min: number; max: number }
+  onAltitudeRangeChange?: (range: { min: number; max: number }) => void
 }
 
 export default function SidePanel({
@@ -97,9 +102,13 @@ export default function SidePanel({
   onElevationCellsChange,
   selectedRoute,
   activeTab: activeTabProp,
+  hiddenAirspaceClasses = new Set(),
+  onAirspaceClassToggle,
+  altitudeRange = { min: 0, max: 60000 },
+  onAltitudeRangeChange,
 }: SidePanelProps) {
-  const [activeTab, setActiveTab] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings' | undefined>(activeTabProp)
-  const [activeTabState, setActiveTabState] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings' | undefined>(activeTabProp)
+  const [activeTab, setActiveTab] = useState<'layers' | 'aircolumn' | 'search' | undefined>(activeTabProp)
+  const [activeTabState, setActiveTabState] = useState<'layers' | 'aircolumn' | 'search' | undefined>(activeTabProp)
   
   // Update activeTab when prop changes
   useEffect(() => { 
@@ -189,6 +198,33 @@ export default function SidePanel({
     }
   }, [clickedPoint, selectedRoute])
 
+  // Helper to check if airspace type is hidden
+  const isAirspaceHidden = useCallback((type: string): boolean => {
+    // Check exact matches first
+    if (hiddenAirspaceClasses.has(type)) return true
+
+    // Check if type contains any hidden class
+    for (const hiddenClass of hiddenAirspaceClasses) {
+      if (hiddenClass === 'Other') {
+        // 'Other' matches anything that's not a standard class
+        const standardClasses = ['Class A', 'Class B', 'Class C', 'Class D', 'Class E', 'Class G', 'Restricted', 'MOA', 'TFR']
+        const isStandard = standardClasses.some(sc => type.includes(sc) || type === sc)
+        if (!isStandard) return true
+      } else if (type.includes(hiddenClass)) {
+        return true
+      }
+    }
+    return false
+  }, [hiddenAirspaceClasses])
+
+  // Helper to check if airspace is within altitude range
+  const isWithinAltitudeRange = useCallback((airspace: AirspaceData): boolean => {
+    const floor = airspace.altitude?.floor ?? 0
+    const ceiling = airspace.altitude?.ceiling ?? 60000
+    // Airspace is visible if any part of it overlaps with the filter range
+    return ceiling >= altitudeRange.min && floor <= altitudeRange.max
+  }, [altitudeRange])
+
   // Find airspaces at clicked point
   const airspacesAtPoint = useMemo(() => {
     if (!clickedPoint) return []
@@ -202,6 +238,8 @@ export default function SidePanel({
     console.log('[SidePanel] Total airspaces to search:', allAirspaces.length)
 
     const found = findAirspacesNearby({ latitude: clickedPoint.lat, longitude: clickedPoint.lon }, fetchRadius, allAirspaces)
+      // Filter by hidden classes and altitude range
+      .filter(a => !isAirspaceHidden(a.type) && isWithinAltitudeRange(a))
       .sort((a, b) => {
         // Sort by altitude floor (lowest first)
         const aFloor = a.altitude?.floor || 0
@@ -209,13 +247,13 @@ export default function SidePanel({
         return aFloor - bFloor
       })
 
-    console.log('[SidePanel] Found', found.length, 'airspaces nearby')
+    console.log('[SidePanel] Found', found.length, 'airspaces nearby (after filtering)')
     found.forEach((a, i) => {
       console.log(`  [${i}] ${a.type} (${a.id}): floor=${a.altitude?.floor}, ceiling=${a.altitude?.ceiling}`)
     })
 
     return found
-  }, [clickedPoint, allAirspaceData, fetchRadius])
+  }, [clickedPoint, allAirspaceData, fetchRadius, isAirspaceHidden, isWithinAltitudeRange])
 
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -405,10 +443,8 @@ export default function SidePanel({
         {/* Navigation Items */}
         {[
           { id: 'search', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z', label: 'Search' },
-          { id: 'layers', icon: 'M12 2L2 7l10 5l10-5l-10-5z M2 17l10 5l10-5 M2 12l10 5l10-5', label: 'Layers' },
-          { id: 'files', icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8', label: 'Files' },
           { id: 'aircolumn', icon: 'M18 20V10 M12 20V4 M6 20v-6', label: 'Air Column' },
-          { id: 'settings', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 0v.01M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z', label: 'Settings' }
+          { id: 'layers', icon: 'M12 2L2 7l10 5l10-5l-10-5z M2 17l10 5l10-5 M2 12l10 5l10-5', label: 'Layers' },
         ].map((item) => (
           <button
             key={item.id}
@@ -497,7 +533,7 @@ export default function SidePanel({
               {/* Content Header */}
               <div style={{ padding: '24px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, backgroundColor: '#ffffff', zIndex: 1000 }}>
                 <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.02em', color: '#111827' }}>
-                  {activeTab === 'layers' ? 'Map Layers' : activeTab === 'files' ? 'Airspace Files' : activeTab === 'search' ? 'Search' : activeTab === 'settings' ? 'Settings' : 'Air Column'}
+                  {activeTab === 'layers' ? 'Map Layers' : activeTab === 'search' ? 'Search' : 'Air Column'}
                 </h2>
                 <button
                   onClick={onToggle}
@@ -647,153 +683,135 @@ export default function SidePanel({
                       ))}
                     </div>
 
-                    {/* Airspace Types */}
-                    {airspaceTypes.length > 0 && onTypeToggle && (
-                      <div style={{ marginTop: '24px' }}>
-                        <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: '600', color: '#111827' }}>
-                          Airspace Types
-                        </h3>
-                        {airspaceTypes.map((type) => (
-                          <div
-                            key={type}
-                            style={{
-                              marginBottom: '12px',
-                              padding: '10px',
-                              border: '1px solid #e5e7eb',
-                              borderRadius: '6px',
-                              backgroundColor: visibleTypes.has(type) ? '#f9fafb' : '#ffffff',
-                            }}
-                          >
-                            <label
+                    {/* Airspace Class Filters */}
+                    <div style={{ marginTop: '24px' }}>
+                      <label style={{
+                        display: 'block',
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        color: '#374151',
+                        marginBottom: '12px'
+                      }}>
+                        Airspace Classes
+                      </label>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                        {['Class A', 'Class B', 'Class C', 'Class D', 'Class E', 'Class G', 'Restricted', 'MOA', 'TFR', 'Other'].map((airspaceClass) => {
+                          const isHidden = hiddenAirspaceClasses.has(airspaceClass)
+                          const colors: Record<string, string> = {
+                            'Class A': '#ef4444',
+                            'Class B': '#3b82f6',
+                            'Class C': '#8b5cf6',
+                            'Class D': '#06b6d4',
+                            'Class E': '#22c55e',
+                            'Class G': '#84cc16',
+                            'Restricted': '#f97316',
+                            'MOA': '#a855f7',
+                            'TFR': '#ef4444',
+                            'Other': '#64748b',
+                          }
+                          const color = colors[airspaceClass] || '#64748b'
+                          return (
+                            <button
+                              key={airspaceClass}
+                              onClick={() => onAirspaceClassToggle?.(airspaceClass)}
                               style={{
-                                display: 'flex',
-                                alignItems: 'center',
+                                padding: '6px 12px',
+                                fontSize: '12px',
+                                fontWeight: '600',
+                                border: `2px solid ${color}`,
+                                borderRadius: '6px',
+                                backgroundColor: isHidden ? 'transparent' : color,
+                                color: isHidden ? color : 'white',
                                 cursor: 'pointer',
-                                fontSize: '14px',
-                                fontWeight: '500',
-                                color: '#111827',
+                                opacity: isHidden ? 0.5 : 1,
+                                transition: 'all 0.2s ease',
                               }}
                             >
-                              <input
-                                type="checkbox"
-                                checked={visibleTypes.has(type)}
-                                onChange={() => onTypeToggle(type)}
-                                style={{
-                                  marginRight: '8px',
-                                  width: '16px',
-                                  height: '16px',
-                                  cursor: 'pointer',
-                                }}
-                              />
-                              {type}
-                            </label>
-                          </div>
-                        ))}
+                              {airspaceClass.replace('Class ', '')}
+                            </button>
+                          )
+                        })}
                       </div>
-                    )}
-                  </div>
-                )}
+                      <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '8px' }}>
+                        Click to toggle airspace classes on/off
+                      </p>
+                    </div>
 
-                {activeTab === 'files' && (
-                  <div>
-                    <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: '600', color: '#111827' }}>
-                      Airspace Files
-                    </h3>
-
-                    {/* Current Files */}
-                    <div style={{ marginBottom: '24px' }}>
-                      <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
-                        Current Files
-                      </h4>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {currentFiles.map((file, index) => (
-                          <div
-                            key={index}
-                            style={{
-                              padding: '10px',
-                              border: '1px solid #e5e7eb',
-                              borderRadius: '6px',
-                              backgroundColor: '#f9fafb'
+                    {/* Altitude Range Filter */}
+                    <div style={{ marginTop: '24px' }}>
+                      <label style={{
+                        display: 'block',
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        color: '#374151',
+                        marginBottom: '12px'
+                      }}>
+                        Altitude Range
+                      </label>
+                      <div style={{ padding: '12px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                          <span style={{ fontSize: '12px', color: '#6b7280' }}>Min: {altitudeRange.min.toLocaleString()} ft</span>
+                          <span style={{ fontSize: '12px', color: '#6b7280' }}>Max: {altitudeRange.max.toLocaleString()} ft</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                          <input
+                            type="range"
+                            min="0"
+                            max="60000"
+                            step="500"
+                            value={altitudeRange.min}
+                            onChange={(e) => {
+                              const newMin = parseInt(e.target.value)
+                              if (newMin < altitudeRange.max) {
+                                onAltitudeRangeChange?.({ min: newMin, max: altitudeRange.max })
+                              }
                             }}
-                          >
-                            <div style={{ fontSize: '13px', fontWeight: '600', color: '#111827', marginBottom: '2px' }}>
-                              {file.name}
-                            </div>
-                            <div style={{ display: 'flex', gap: '12px', fontSize: '11px', color: '#6b7280' }}>
-                              <span><strong>Source:</strong> {file.source}</span>
-                              {file.size !== undefined && file.size > 0 && (
-                                <span><strong>Size:</strong> {file.size > 1024 * 1024
-                                  ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
-                                  : `${(file.size / 1024).toFixed(0)} KB`}</span>
-                              )}
-                              {file.date && (
-                                <span><strong>Modified:</strong> {new Date(file.date).toLocaleDateString()}</span>
-                              )}
-                            </div>
-                          </div>
-                        ))}
+                            style={{ flex: 1, accentColor: '#3b82f6', cursor: 'pointer' }}
+                          />
+                          <input
+                            type="range"
+                            min="0"
+                            max="60000"
+                            step="500"
+                            value={altitudeRange.max}
+                            onChange={(e) => {
+                              const newMax = parseInt(e.target.value)
+                              if (newMax > altitudeRange.min) {
+                                onAltitudeRangeChange?.({ min: altitudeRange.min, max: newMax })
+                              }
+                            }}
+                            style={{ flex: 1, accentColor: '#3b82f6', cursor: 'pointer' }}
+                          />
+                        </div>
+                        <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '8px' }}>
+                          Only show airspaces within this altitude range
+                        </p>
                       </div>
                     </div>
 
-                    {/* Upload Section */}
-                    <div>
-                      <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
-                        Add OpenAir File
-                      </h4>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept=".txt"
-                        onChange={handleFileSelect}
-                        style={{ display: 'none' }}
-                      />
-                      <button
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={isUploading}
-                        style={{
-                          width: '100%',
-                          padding: '10px',
-                          backgroundColor: isUploading ? '#9ca3af' : '#3b82f6',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '6px',
-                          fontSize: '14px',
-                          fontWeight: '500',
-                          cursor: isUploading ? 'not-allowed' : 'pointer',
-                          marginBottom: '12px',
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!isUploading) {
-                            e.currentTarget.style.backgroundColor = '#2563eb'
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!isUploading) {
-                            e.currentTarget.style.backgroundColor = '#3b82f6'
-                          }
-                        }}
-                      >
-                        {isUploading ? 'Processing...' : 'Choose OpenAir File'}
-                      </button>
-
-                      {uploadStatus && (
-                        <div
-                          style={{
-                            padding: '10px',
-                            borderRadius: '6px',
-                            marginBottom: '12px',
-                            fontSize: '12px',
-                            backgroundColor: uploadStatus.type === 'success' ? '#d1fae5' : '#fee2e2',
-                            color: uploadStatus.type === 'success' ? '#065f46' : '#991b1b',
-                            border: `1px solid ${uploadStatus.type === 'success' ? '#6ee7b7' : '#fca5a5'}`,
-                          }}
-                        >
-                          {uploadStatus.message}
+                    {/* Fetch Radius */}
+                    <div style={{ marginTop: '24px' }}>
+                      <div style={{ padding: '12px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                          <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                            Fetch Radius
+                          </label>
+                          <span style={{ fontSize: '12px', fontWeight: '500', color: '#6b7280', backgroundColor: '#e5e7eb', padding: '2px 6px', borderRadius: '4px' }}>
+                            {fetchRadius} km
+                          </span>
                         </div>
-                      )}
-
-                      <div style={{ fontSize: '12px', color: '#6b7280' }}>
-                        Upload an OpenAir format (.txt) file to add as a layer. The file will be validated before being added.
+                        <input
+                          type="range"
+                          min="1"
+                          max="25"
+                          step="0.5"
+                          value={fetchRadius}
+                          onChange={(e) => setFetchRadius(parseFloat(e.target.value))}
+                          style={{ width: '100%', accentColor: '#3b82f6', cursor: 'pointer' }}
+                        />
+                        <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '6px' }}>
+                          Search radius for finding nearby airspaces (1-25 km).
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -918,37 +936,6 @@ export default function SidePanel({
                         </button>
                       </div>
                     )}
-                  </div>
-                )}
-
-                {activeTab === 'settings' && (
-                  <div>
-                    <div style={{ textAlign: 'left', padding: '16px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                        <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>
-                          Fetch Radius
-                        </label>
-                        <span style={{ fontSize: '12px', fontWeight: '500', color: '#6b7280', backgroundColor: '#e5e7eb', padding: '2px 6px', borderRadius: '4px' }}>
-                          {fetchRadius} km
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min="1"
-                        max="25"
-                        step="0.5"
-                        value={fetchRadius}
-                        onChange={(e) => setFetchRadius(parseFloat(e.target.value))}
-                        style={{
-                          width: '100%',
-                          accentColor: '#3b82f6',
-                          cursor: 'pointer'
-                        }}
-                      />
-                      <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '6px' }}>
-                        Search radius for finding nearby airspaces (1-25 km).
-                      </p>
-                    </div>
                   </div>
                 )}
 

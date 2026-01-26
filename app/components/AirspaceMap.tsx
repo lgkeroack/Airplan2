@@ -493,12 +493,58 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     return types
   }, [allAirspaces])
 
+  // Hidden airspace classes (Class E hidden by default)
+  const [hiddenAirspaceClasses, setHiddenAirspaceClasses] = useState<Set<string>>(() => new Set(['Class E']))
+
+  // Altitude range filter
+  const [altitudeRange, setAltitudeRange] = useState<{ min: number; max: number }>({ min: 0, max: 60000 })
+
+  // Handler to toggle airspace class visibility
+  const handleAirspaceClassToggle = useCallback((airspaceClass: string) => {
+    setHiddenAirspaceClasses(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(airspaceClass)) {
+        newSet.delete(airspaceClass)
+      } else {
+        newSet.add(airspaceClass)
+      }
+      return newSet
+    })
+  }, [])
+
+  // Helper to check if airspace type is hidden
+  const isAirspaceHidden = useCallback((type: string): boolean => {
+    // Check exact matches first
+    if (hiddenAirspaceClasses.has(type)) return true
+
+    // Check if type contains any hidden class
+    for (const hiddenClass of hiddenAirspaceClasses) {
+      if (hiddenClass === 'Other') {
+        // 'Other' matches anything that's not a standard class
+        const standardClasses = ['Class A', 'Class B', 'Class C', 'Class D', 'Class E', 'Class G', 'Restricted', 'MOA', 'TFR']
+        const isStandard = standardClasses.some(sc => type.includes(sc) || type === sc)
+        if (!isStandard) return true
+      } else if (type.includes(hiddenClass)) {
+        return true
+      }
+    }
+    return false
+  }, [hiddenAirspaceClasses])
+
+  // Helper to check if airspace is within altitude range
+  const isWithinAltitudeRange = useCallback((airspace: AirspaceData): boolean => {
+    const floor = airspace.altitude?.floor ?? 0
+    const ceiling = airspace.altitude?.ceiling ?? 60000
+    // Airspace is visible if any part of it overlaps with the filter range
+    return ceiling >= altitudeRange.min && floor <= altitudeRange.max
+  }, [altitudeRange])
+
   // Route radius for terrain profile
   const [routeRadius, setRouteRadius] = useState(5)
 
   // Start with side panel closed and no active tab; center on Squamish, BC
   const [isPanelOpen, setIsPanelOpen] = useState(false)
-  const [sidePanelActiveTab, setSidePanelActiveTab] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings' | null>(null)
+  const [sidePanelActiveTab, setSidePanelActiveTab] = useState<'layers' | 'aircolumn' | 'search' | null>(null)
   const [mapCenter, setMapCenter] = useState<LatLngExpression>([49.7016, -123.1558])
   const [mapZoom, setMapZoom] = useState(10)
   const mapRef = useRef<LeafletMap | null>(null)
@@ -968,10 +1014,16 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
 
   // Memoize airspace layer rendering to prevent re-computation on every render
   const airspaceLayer = useMemo(() => {
-    // Filter airspaces by type and viewport bounds for performance
+    // Filter airspaces by type, hidden classes, altitude range, and viewport bounds
     const filtered = allAirspaces
       .filter(item => {
         if (!visibleTypes.has(item.type)) return false
+
+        // Filter by hidden airspace classes
+        if (isAirspaceHidden(item.type)) return false
+
+        // Filter by altitude range
+        if (!isWithinAltitudeRange(item)) return false
 
         // Skip if no bounds yet
         if (!mapBounds) return true
@@ -1082,7 +1134,7 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
 
       return null
     })
-  }, [allAirspaces, visibleTypes, mapBounds, layers, selectedAirspaceId])
+  }, [allAirspaces, visibleTypes, mapBounds, layers, selectedAirspaceId, isAirspaceHidden, isWithinAltitudeRange])
 
   // Memoize allAirspaceData for SidePanel
   const allAirspaceData = useMemo(() => [
@@ -1552,6 +1604,10 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         activeTab={sidePanelActiveTab ?? undefined}
         selectedAirspaceId={selectedAirspaceId}
         onAirspaceSelect={handleAirspaceSelect}
+        hiddenAirspaceClasses={hiddenAirspaceClasses}
+        onAirspaceClassToggle={handleAirspaceClassToggle}
+        altitudeRange={altitudeRange}
+        onAltitudeRangeChange={setAltitudeRange}
       />
 
       {/* Route Builder UI */}
