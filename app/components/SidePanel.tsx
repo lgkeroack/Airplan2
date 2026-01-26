@@ -412,34 +412,6 @@ export default function SidePanel({
           fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif"
         }}
       >
-        {/* Hamburger / Toggle */}
-        <button
-          onClick={onToggle}
-          style={{
-            width: '40px',
-            height: '40px',
-            borderRadius: '8px',
-            border: 'none',
-            backgroundColor: 'transparent',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#374151',
-            transition: 'background-color 0.2s',
-            marginBottom: '20px'
-          }}
-          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
-          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-          title={isOpen ? "Collapse Menu" : "Expand Menu"}
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="3" y1="12" x2="21" y2="12" />
-            <line x1="3" y1="6" x2="21" y2="6" />
-            <line x1="3" y1="18" x2="21" y2="18" />
-          </svg>
-        </button>
-
         {/* Navigation Items */}
         {[
           { id: 'search', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z', label: 'Search' },
@@ -749,11 +721,39 @@ export default function SidePanel({
                         Altitude Range
                       </label>
                       <div style={{ padding: '12px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                          <span style={{ fontSize: '12px', color: '#6b7280' }}>Min: {altitudeRange.min.toLocaleString()} ft</span>
-                          <span style={{ fontSize: '12px', color: '#6b7280' }}>Max: {altitudeRange.max.toLocaleString()} ft</span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                          <span style={{ fontSize: '12px', color: '#374151', fontWeight: '500' }}>
+                            {altitudeRange.min.toLocaleString()} ft ({Math.round(altitudeRange.min * 0.3048).toLocaleString()} m)
+                          </span>
+                          <span style={{ fontSize: '12px', color: '#374151', fontWeight: '500' }}>
+                            {altitudeRange.max.toLocaleString()} ft ({Math.round(altitudeRange.max * 0.3048).toLocaleString()} m)
+                          </span>
                         </div>
-                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                        {/* Dual-handle range slider */}
+                        <div style={{ position: 'relative', height: '20px', marginBottom: '8px' }}>
+                          {/* Track background */}
+                          <div style={{
+                            position: 'absolute',
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            left: 0,
+                            right: 0,
+                            height: '6px',
+                            backgroundColor: '#e5e7eb',
+                            borderRadius: '3px'
+                          }} />
+                          {/* Active range highlight */}
+                          <div style={{
+                            position: 'absolute',
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            left: `${(altitudeRange.min / 60000) * 100}%`,
+                            right: `${100 - (altitudeRange.max / 60000) * 100}%`,
+                            height: '6px',
+                            backgroundColor: '#3b82f6',
+                            borderRadius: '3px'
+                          }} />
+                          {/* Min slider */}
                           <input
                             type="range"
                             min="0"
@@ -762,12 +762,25 @@ export default function SidePanel({
                             value={altitudeRange.min}
                             onChange={(e) => {
                               const newMin = parseInt(e.target.value)
-                              if (newMin < altitudeRange.max) {
+                              if (newMin < altitudeRange.max - 500) {
                                 onAltitudeRangeChange?.({ min: newMin, max: altitudeRange.max })
                               }
                             }}
-                            style={{ flex: 1, accentColor: '#3b82f6', cursor: 'pointer' }}
+                            style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '100%',
+                              height: '100%',
+                              WebkitAppearance: 'none',
+                              appearance: 'none',
+                              background: 'transparent',
+                              pointerEvents: 'none',
+                              cursor: 'pointer'
+                            }}
+                            className="dual-range-min"
                           />
+                          {/* Max slider */}
                           <input
                             type="range"
                             min="0"
@@ -776,12 +789,54 @@ export default function SidePanel({
                             value={altitudeRange.max}
                             onChange={(e) => {
                               const newMax = parseInt(e.target.value)
-                              if (newMax > altitudeRange.min) {
+                              if (newMax > altitudeRange.min + 500) {
                                 onAltitudeRangeChange?.({ min: altitudeRange.min, max: newMax })
                               }
                             }}
-                            style={{ flex: 1, accentColor: '#3b82f6', cursor: 'pointer' }}
+                            style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '100%',
+                              height: '100%',
+                              WebkitAppearance: 'none',
+                              appearance: 'none',
+                              background: 'transparent',
+                              pointerEvents: 'none',
+                              cursor: 'pointer'
+                            }}
+                            className="dual-range-max"
                           />
+                          <style>{`
+                            .dual-range-min::-webkit-slider-thumb,
+                            .dual-range-max::-webkit-slider-thumb {
+                              -webkit-appearance: none;
+                              appearance: none;
+                              width: 18px;
+                              height: 18px;
+                              background: #3b82f6;
+                              border-radius: 50%;
+                              cursor: pointer;
+                              pointer-events: auto;
+                              border: 2px solid white;
+                              box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+                            }
+                            .dual-range-min::-moz-range-thumb,
+                            .dual-range-max::-moz-range-thumb {
+                              width: 18px;
+                              height: 18px;
+                              background: #3b82f6;
+                              border-radius: 50%;
+                              cursor: pointer;
+                              pointer-events: auto;
+                              border: 2px solid white;
+                              box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+                            }
+                          `}</style>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#9ca3af' }}>
+                          <span>0 ft</span>
+                          <span>60,000 ft</span>
                         </div>
                         <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '8px' }}>
                           Only show airspaces within this altitude range

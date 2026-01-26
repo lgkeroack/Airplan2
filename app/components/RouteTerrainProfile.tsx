@@ -501,7 +501,7 @@ export default function RouteTerrainProfile({
                         fontSize: '12px',
                         color: '#9ca3af'
                     }}>
-                        <p>Elevation Range: {Math.round(minElev)}m - {Math.round(maxElev)}m</p>
+                        <p>Elevation Range: {Math.round(minElev * 3.28084).toLocaleString()} ft ({Math.round(minElev).toLocaleString()} m) - {Math.round(maxElev * 3.28084).toLocaleString()} ft ({Math.round(maxElev).toLocaleString()} m)</p>
                         <p>Grid Points: {gridCells.length}</p>
                     </div>
 
