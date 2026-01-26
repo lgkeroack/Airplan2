@@ -184,10 +184,10 @@ export default function SidePanel({
           }
         })
         .catch(err => console.error('Elevation fetch failed:', err))
-    } else if (route && route.length > 0) {
+    } else if (selectedRoute && selectedRoute.points && selectedRoute.points.length > 0) {
       setActiveTab('aircolumn')
     }
-  }, [clickedPoint, route])
+  }, [clickedPoint, selectedRoute])
 
   // Find airspaces at clicked point
   const airspacesAtPoint = useMemo(() => {

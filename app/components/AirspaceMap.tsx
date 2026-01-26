@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, useId } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap, Circle, Polyline, Polygon } from 'react-leaflet'
-import L, { DivIcon, LatLngExpression } from 'leaflet'
+import L, { DivIcon, LatLngExpression, Map as LeafletMap } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import SidePanel from './SidePanel'
 import { findAirspacesAtPoint, findAirspacesNearby } from '@/lib/point-in-airspace'
@@ -33,6 +33,13 @@ export interface RoutePoint {
   lat: number
   lon: number
   ele?: number
+}
+
+interface Layer {
+  id: string
+  name: string
+  visible: boolean
+  opacity: number
 }
 
 // Calculate distance between two points in meters
@@ -341,12 +348,45 @@ function getRoutePointAtDistance(
   distanceKm: number
 ): { lat: number; lon: number } | null {
   if (route.length < 2) return null
-  
+
   // Calculate distance between two points in km
   const distanceKmBetween = (p1: { lat: number; lon: number }, p2: { lat: number; lon: number }): number => {
     const dx = (p2.lon - p1.lon) * 111 * Math.cos(p1.lat * Math.PI / 180)
     const dy = (p2.lat - p1.lat) * 111
     return Math.sqrt(dx * dx + dy * dy)
+  }
+
+  let accumulated = 0
+  for (let i = 0; i < route.length - 1; i++) {
+    const segmentDist = distanceKmBetween(route[i], route[i + 1])
+    if (accumulated + segmentDist >= distanceKm) {
+      const ratio = (distanceKm - accumulated) / segmentDist
+      return {
+        lat: route[i].lat + ratio * (route[i + 1].lat - route[i].lat),
+        lon: route[i].lon + ratio * (route[i + 1].lon - route[i].lon)
+      }
+    }
+    accumulated += segmentDist
+  }
+  return route[route.length - 1]
+}
+
+// Get color for airspace type
+function getAirspaceColor(type: string): string {
+  const colors: Record<string, string> = {
+    'Class A': '#ef4444',
+    'Class B': '#3b82f6',
+    'Class C': '#8b5cf6',
+    'Class D': '#06b6d4',
+    'Class E': '#22c55e',
+    'Class G': '#84cc16',
+    'Restricted': '#f97316',
+    'Prohibited': '#dc2626',
+    'Warning': '#eab308',
+    'MOA': '#a855f7',
+    'TFR': '#ef4444',
+    'Alert': '#f59e0b',
+    'National Park': '#15803d',
   }
 
   // Try to match partial names if exact match fails
@@ -436,6 +476,26 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     return initialData
   })
   const [uploadedFiles, setUploadedFiles] = useState<Array<{ id: string; name: string; data: AirspaceData[] }>>([])
+
+  // Combine all airspace data sources
+  const allAirspaces = useMemo(() => {
+    const all = [...airspaceData]
+    uploadedFiles.forEach(file => {
+      all.push(...file.data)
+    })
+    return all
+  }, [airspaceData, uploadedFiles])
+
+  // Visible airspace types (all enabled by default)
+  const visibleTypes = useMemo(() => {
+    const types = new Set<string>()
+    allAirspaces.forEach(item => types.add(item.type))
+    return types
+  }, [allAirspaces])
+
+  // Route radius for terrain profile
+  const [routeRadius, setRouteRadius] = useState(5)
+
   // Start with side panel closed and no active tab; center on Squamish, BC
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [sidePanelActiveTab, setSidePanelActiveTab] = useState<'layers' | 'files' | 'aircolumn' | 'search' | 'settings' | null>(null)
@@ -542,6 +602,42 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     { id: 'thermal-skyways', name: 'Thermal Skyways', visible: false, opacity: 0.7 },
     { id: 'thermal-hotspots', name: 'Thermal Hotspots', visible: false, opacity: 0.7 },
   ])
+
+  // Basemap options
+  const basemapOptions = [
+    { id: 'topographic', name: 'Topographic (OpenTopoMap)' },
+    { id: 'openstreetmap', name: 'OpenStreetMap' },
+    { id: 'osm-humanitarian', name: 'Humanitarian (HOT)' },
+    { id: 'cartodb-positron', name: 'Light (CartoDB)' },
+    { id: 'cartodb-dark', name: 'Dark (CartoDB)' },
+    { id: 'cartodb-voyager', name: 'Voyager (CartoDB)' },
+    { id: 'esri-imagery', name: 'Satellite (ESRI)' },
+    { id: 'esri-topo', name: 'Topo (ESRI)' },
+    { id: 'esri-street', name: 'Street (ESRI)' },
+    { id: 'esri-gray', name: 'Light Gray (ESRI)' },
+    { id: 'esri-ocean', name: 'Ocean (ESRI)' },
+    { id: 'esri-natgeo', name: 'National Geographic' },
+    { id: 'stadia-outdoors', name: 'Outdoors (Stadia)' },
+    { id: 'stadia-bright', name: 'Bright (Stadia)' },
+    { id: 'cyclosm', name: 'CyclOSM' },
+  ]
+
+  // Layer handlers
+  const handleLayerToggle = useCallback((layerId: string) => {
+    setLayers(prev => prev.map(layer =>
+      layer.id === layerId ? { ...layer, visible: !layer.visible } : layer
+    ))
+  }, [])
+
+  const handleLayerOpacityChange = useCallback((layerId: string, opacity: number) => {
+    setLayers(prev => prev.map(layer =>
+      layer.id === layerId ? { ...layer, opacity } : layer
+    ))
+  }, [])
+
+  const handleBasemapChange = useCallback((basemapId: string) => {
+    setSelectedBasemap(basemapId)
+  }, [])
 
   // Handle location search
   const handleSearchLocation = useCallback(async (query: string) => {
@@ -806,6 +902,22 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     return [Number(clickedPoint.lat.toFixed(6)), Number(clickedPoint.lon.toFixed(6))] as LatLngExpression
   }, [clickedPoint])
 
+  // Generate popup content when side panel is open
+  const generatePopupContent = useCallback((lat: number, lon: number) => {
+    return (
+      <div style={{ fontSize: '12px', padding: '4px' }}>
+        <div style={{ fontWeight: 'bold' }}>
+          {lat.toFixed(5)}°, {lon.toFixed(5)}°
+        </div>
+        {elevation !== null && (
+          <div style={{ color: '#3b82f6', marginTop: '2px' }}>
+            {Math.round(elevation * 3.28084)} ft | {elevation} m MSL
+          </div>
+        )}
+      </div>
+    )
+  }, [elevation])
+
   // Memoize airspace layer rendering to prevent re-computation on every render
   const airspaceLayer = useMemo(() => {
     // Filter airspaces by type and viewport bounds for performance
@@ -1003,7 +1115,6 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
             zoomControl={false}
             preferCanvas={true}
             closePopupOnClick={false}
-            scrollWheelZoom={true}
             dragging={false}
       >
         <MapInitializer center={mapCenter} zoom={mapZoom} />
