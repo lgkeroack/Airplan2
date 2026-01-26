@@ -781,7 +781,55 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     setClickedPoint(null)
   }, [contextMenu])
 
+  // Handle airspace selection from side panel - frame and highlight on map
+  const handleAirspaceSelect = useCallback((airspaceIds: string | string[]) => {
+    // Set selection for highlighting
+    setSelectedAirspaceId(airspaceIds)
 
+    // Find the airspace(s) and calculate bounds
+    const ids = Array.isArray(airspaceIds) ? airspaceIds : [airspaceIds]
+    const selectedAirspaces = allAirspaces.filter(a => ids.includes(a.id))
+
+    if (selectedAirspaces.length > 0 && mapRef.current) {
+      // Calculate combined bounds
+      let minLat = Infinity, maxLat = -Infinity
+      let minLon = Infinity, maxLon = -Infinity
+
+      selectedAirspaces.forEach(airspace => {
+        // Use pre-calculated bounds if available
+        if (airspace.bounds) {
+          minLat = Math.min(minLat, airspace.bounds.south)
+          maxLat = Math.max(maxLat, airspace.bounds.north)
+          minLon = Math.min(minLon, airspace.bounds.west)
+          maxLon = Math.max(maxLon, airspace.bounds.east)
+        } else if (airspace.polygon && airspace.polygon.length > 0) {
+          // Calculate from polygon
+          airspace.polygon.forEach(coord => {
+            minLat = Math.min(minLat, coord.latitude)
+            maxLat = Math.max(maxLat, coord.latitude)
+            minLon = Math.min(minLon, coord.longitude)
+            maxLon = Math.max(maxLon, coord.longitude)
+          })
+        } else if (airspace.coordinates) {
+          // Use center point with radius
+          const radiusDeg = (airspace.radius || 1) * 1852 / 111000 // Convert NM to degrees
+          minLat = Math.min(minLat, airspace.coordinates.latitude - radiusDeg)
+          maxLat = Math.max(maxLat, airspace.coordinates.latitude + radiusDeg)
+          minLon = Math.min(minLon, airspace.coordinates.longitude - radiusDeg)
+          maxLon = Math.max(maxLon, airspace.coordinates.longitude + radiusDeg)
+        }
+      })
+
+      // Frame the map to show the airspace with padding
+      if (minLat !== Infinity) {
+        const bounds = L.latLngBounds(
+          [minLat, minLon],
+          [maxLat, maxLon]
+        )
+        mapRef.current.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 })
+      }
+    }
+  }, [allAirspaces])
 
   // Route Handlers
   const handleStartMeasurement = useCallback(() => {
@@ -1478,10 +1526,12 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         onToggle={() => {
           const newOpenState = !isPanelOpen
           setIsPanelOpen(newOpenState)
-          // When closing the panel, clear the point and route data
+          // When closing the panel, clear the point, route data, and finished routes
           if (!newOpenState) {
             setClickedPoint(null)
             setSelectedRouteId(null)
+            setFinishedRoutes([])
+            setSelectedAirspaceId(null)
           }
         }}
         layers={layers}
@@ -1500,6 +1550,8 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         }}
         selectedRoute={selectedRouteId && finishedRoutes.length > 0 ? finishedRoutes.find(r => r.id === selectedRouteId) : undefined}
         activeTab={sidePanelActiveTab ?? undefined}
+        selectedAirspaceId={selectedAirspaceId}
+        onAirspaceSelect={handleAirspaceSelect}
       />
 
       {/* Route Builder UI */}
