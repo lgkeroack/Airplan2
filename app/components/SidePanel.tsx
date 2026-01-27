@@ -117,6 +117,11 @@ export default function SidePanel({
   }, [activeTabProp])
 
   const [searchHistory, setSearchHistory] = useState<string[]>([])
+  const [searchResults, setSearchResults] = useState<{
+    airspaces: AirspaceData[]
+    loading: boolean
+  }>({ airspaces: [], loading: false })
+  const [searchQuery, setSearchQuery] = useState('')
 
   // Use prop value for fetchRadius, with local state as fallback
   const fetchRadius = fetchRadiusProp
@@ -125,7 +130,6 @@ export default function SidePanel({
       onFetchRadiusChange(value)
     }
   }
-  const [searchQuery, setSearchQuery] = useState('')
   const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState({ progress: 0, status: 'Starting...' })
@@ -224,6 +228,71 @@ export default function SidePanel({
     // Airspace is visible if any part of it overlaps with the filter range
     return ceiling >= altitudeRange.min && floor <= altitudeRange.max
   }, [altitudeRange])
+
+  // Search for airspaces matching query
+  const searchAirspaces = useCallback((query: string): AirspaceData[] => {
+    if (!query || query.length < 2) return []
+
+    const lowerQuery = query.toLowerCase()
+    const allAirspaces: AirspaceData[] = []
+    allAirspaceData.forEach(source => {
+      allAirspaces.push(...source.data)
+    })
+
+    // Filter airspaces that match the query (by location, type, or NOTAM number)
+    const matches = allAirspaces.filter(airspace => {
+      // Skip hidden airspace classes
+      if (isAirspaceHidden(airspace.type)) return false
+
+      // Check location/identifier
+      const identifier = (airspace.location || airspace.id || '').toLowerCase()
+      if (identifier.includes(lowerQuery)) return true
+
+      // Check type
+      if (airspace.type.toLowerCase().includes(lowerQuery)) return true
+
+      // Check NOTAM number if it exists
+      if (airspace.notamNumber && airspace.notamNumber.toLowerCase().includes(lowerQuery)) return true
+
+      // Check class (e.g., "class b", "b")
+      const classMatch = lowerQuery.match(/^(?:class\s*)?([a-g])$/i)
+      if (classMatch) {
+        const classLetter = classMatch[1].toUpperCase()
+        if (airspace.type.includes(`Class ${classLetter}`)) return true
+      }
+
+      return false
+    })
+
+    // Sort by relevance (exact matches first, then by type)
+    return matches
+      .sort((a, b) => {
+        const aIdentifier = (a.location || a.id || '').toLowerCase()
+        const bIdentifier = (b.location || b.id || '').toLowerCase()
+
+        // Exact matches first
+        if (aIdentifier === lowerQuery && bIdentifier !== lowerQuery) return -1
+        if (bIdentifier === lowerQuery && aIdentifier !== lowerQuery) return 1
+
+        // Then starts with query
+        if (aIdentifier.startsWith(lowerQuery) && !bIdentifier.startsWith(lowerQuery)) return -1
+        if (bIdentifier.startsWith(lowerQuery) && !aIdentifier.startsWith(lowerQuery)) return 1
+
+        // Then alphabetically
+        return aIdentifier.localeCompare(bIdentifier)
+      })
+      .slice(0, 20) // Limit to 20 results
+  }, [allAirspaceData, isAirspaceHidden])
+
+  // Update search results when query changes
+  useEffect(() => {
+    if (searchQuery.length >= 2) {
+      const matches = searchAirspaces(searchQuery)
+      setSearchResults({ airspaces: matches, loading: false })
+    } else {
+      setSearchResults({ airspaces: [], loading: false })
+    }
+  }, [searchQuery, searchAirspaces])
 
   // Find airspaces at clicked point
   const airspacesAtPoint = useMemo(() => {
@@ -937,7 +1006,7 @@ export default function SidePanel({
                           type="text"
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
-                          placeholder="search"
+                          placeholder="Search airspaces, locations..."
                           style={{
                             flex: 1,
                             padding: '10px 14px',
@@ -975,8 +1044,111 @@ export default function SidePanel({
                       </div>
                     </form>
 
+                    {/* Airspace Search Results */}
+                    {searchQuery.length >= 2 && (
+                      <div style={{ marginBottom: '24px' }}>
+                        {searchResults.airspaces.length > 0 ? (
+                          <>
+                            <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: '600', color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                              Airspaces ({searchResults.airspaces.length})
+                            </h3>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '300px', overflowY: 'auto' }}>
+                              {searchResults.airspaces.map((airspace) => {
+                                const colors: Record<string, string> = {
+                                  'Class A': '#ef4444',
+                                  'Class B': '#3b82f6',
+                                  'Class C': '#8b5cf6',
+                                  'Class D': '#06b6d4',
+                                  'Class E': '#22c55e',
+                                  'Class G': '#84cc16',
+                                  'Restricted': '#f97316',
+                                  'MOA': '#a855f7',
+                                  'TFR': '#ef4444',
+                                }
+                                let color = '#64748b'
+                                for (const [key, val] of Object.entries(colors)) {
+                                  if (airspace.type.includes(key)) {
+                                    color = val
+                                    break
+                                  }
+                                }
+                                const floor = airspace.altitude?.floor ?? 0
+                                const ceiling = airspace.altitude?.ceiling ?? 0
+                                const floorM = Math.round(floor * 0.3048)
+                                const ceilingM = Math.round(ceiling * 0.3048)
+
+                                return (
+                                  <button
+                                    key={airspace.id}
+                                    onClick={() => {
+                                      onAirspaceSelect?.(airspace.id)
+                                      setSearchQuery('')
+                                    }}
+                                    style={{
+                                      textAlign: 'left',
+                                      padding: '10px 12px',
+                                      background: 'white',
+                                      border: `2px solid ${color}`,
+                                      borderRadius: '8px',
+                                      cursor: 'pointer',
+                                      fontSize: '13px',
+                                      color: '#374151',
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '4px',
+                                      transition: 'all 0.15s ease',
+                                      fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif"
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      e.currentTarget.style.backgroundColor = color
+                                      e.currentTarget.style.color = 'white'
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      e.currentTarget.style.backgroundColor = 'white'
+                                      e.currentTarget.style.color = '#374151'
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                      <span style={{
+                                        padding: '2px 6px',
+                                        backgroundColor: color,
+                                        color: 'white',
+                                        borderRadius: '4px',
+                                        fontSize: '10px',
+                                        fontWeight: 'bold'
+                                      }}>
+                                        {airspace.type.replace('Class ', '')}
+                                      </span>
+                                      <span style={{ fontWeight: '600', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {airspace.location || airspace.id}
+                                      </span>
+                                    </div>
+                                    <div style={{ fontSize: '11px', opacity: 0.8 }}>
+                                      {floor.toLocaleString()} - {ceiling.toLocaleString()} ft ({floorM.toLocaleString()} - {ceilingM.toLocaleString()} m)
+                                      {airspace.notamNumber && <span style={{ marginLeft: '8px' }}>• {airspace.notamNumber}</span>}
+                                    </div>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </>
+                        ) : (
+                          <div style={{ padding: '16px', textAlign: 'center', color: '#9ca3af', fontSize: '13px' }}>
+                            No airspaces found matching "{searchQuery}"
+                          </div>
+                        )}
+
+                        {/* Location search hint */}
+                        <div style={{ marginTop: '16px', padding: '12px', backgroundColor: '#f0f9ff', borderRadius: '8px', borderLeft: '3px solid #3b82f6' }}>
+                          <div style={{ fontSize: '12px', color: '#1e40af' }}>
+                            <strong>Tip:</strong> Press GO or Enter to search for locations (cities, addresses, coordinates)
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Search History */}
-                    {searchHistory.length > 0 && (
+                    {searchHistory.length > 0 && searchQuery.length < 2 && (
                       <div>
                         <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                           Recent Searches
