@@ -69,7 +69,7 @@ interface SidePanelProps {
   onFetchRadiusChange?: (radius: number) => void
   onElevationCellsChange?: (cells: ElevationCellData[], minElev: number, maxElev: number) => void
   selectedRoute?: RouteData
-  activeTab?: 'layers' | 'aircolumn' | 'search'
+  activeTab?: 'layers' | 'aircolumn' | 'search' | 'help'
   // Airspace filtering
   hiddenAirspaceClasses?: Set<string>
   onAirspaceClassToggle?: (airspaceClass: string) => void
@@ -107,8 +107,8 @@ export default function SidePanel({
   altitudeRange = { min: 0, max: 60000 },
   onAltitudeRangeChange,
 }: SidePanelProps) {
-  const [activeTab, setActiveTab] = useState<'layers' | 'aircolumn' | 'search' | undefined>(activeTabProp)
-  const [activeTabState, setActiveTabState] = useState<'layers' | 'aircolumn' | 'search' | undefined>(activeTabProp)
+  const [activeTab, setActiveTab] = useState<'layers' | 'aircolumn' | 'search' | 'help' | undefined>(activeTabProp)
+  const [activeTabState, setActiveTabState] = useState<'layers' | 'aircolumn' | 'search' | 'help' | undefined>(activeTabProp)
   
   // Update activeTab when prop changes
   useEffect(() => { 
@@ -487,7 +487,7 @@ export default function SidePanel({
           fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif"
         }}
       >
-        {/* Navigation Items */}
+        {/* Main Navigation Items */}
         {[
           { id: 'search', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z', label: 'Search' },
           { id: 'aircolumn', icon: 'M18 20V10 M12 20V4 M6 20v-6', label: 'Air Column' },
@@ -545,6 +545,60 @@ export default function SidePanel({
             )}
           </button>
         ))}
+
+        {/* Spacer to push help button to bottom - only on desktop */}
+        {!isMobile && <div style={{ flex: 1 }} />}
+
+        {/* Help Button at bottom */}
+        <button
+          onClick={() => {
+            if (activeTab === 'help' && isOpen) {
+              onToggle() // Close if clicking active tab
+            } else {
+              setActiveTab('help')
+              if (!isOpen) onToggle() // Open if closed
+            }
+          }}
+          style={{
+            width: '44px',
+            height: '44px',
+            borderRadius: '10px',
+            border: 'none',
+            backgroundColor: activeTab === 'help' && isOpen ? '#eff6ff' : 'transparent',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: activeTab === 'help' && isOpen ? '#3b82f6' : '#6b7280',
+            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+            position: 'relative',
+            marginBottom: isMobile ? 0 : '12px',
+            fontSize: '20px',
+            fontWeight: 'bold'
+          }}
+          onMouseEnter={(e) => {
+            if (!(activeTab === 'help' && isOpen)) e.currentTarget.style.backgroundColor = '#f9fafb'
+          }}
+          onMouseLeave={(e) => {
+            if (!(activeTab === 'help' && isOpen)) e.currentTarget.style.backgroundColor = 'transparent'
+          }}
+          title="Help & About"
+        >
+          ?
+          {activeTab === 'help' && isOpen && (
+            <div style={{
+              position: 'absolute',
+              right: isMobile ? 'auto' : '-1px',
+              left: isMobile ? '12px' : 'auto',
+              top: isMobile ? '-1px' : '12px',
+              bottom: isMobile ? 'auto' : '12px',
+              width: isMobile ? '20px' : '3px',
+              height: isMobile ? '3px' : 'auto',
+              backgroundColor: '#3b82f6',
+              borderRadius: isMobile ? '0 0 3px 3px' : '3px 0 0 3px'
+            }} />
+          )}
+        </button>
       </div>
 
       {/* Main Content Panel Container */}
@@ -619,7 +673,7 @@ export default function SidePanel({
                 zIndex: 1000
               }}>
                 <h2 style={{ margin: 0, fontSize: isMobile ? '16px' : '20px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.02em', color: '#111827' }}>
-                  {activeTab === 'layers' ? 'Map Layers' : activeTab === 'search' ? 'Search' : 'Air Column'}
+                  {activeTab === 'layers' ? 'Map Layers' : activeTab === 'search' ? 'Search' : activeTab === 'help' ? 'Help & About' : 'Air Column'}
                 </h2>
                 <button
                   onClick={onToggle}
@@ -1208,6 +1262,134 @@ export default function SidePanel({
                         </button>
                       </div>
                     )}
+                  </div>
+                )}
+
+{activeTab === 'help' && (
+                  <div>
+                    {/* About Section */}
+                    <div style={{ marginBottom: '24px' }}>
+                      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: '600', color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        About
+                      </h3>
+                      <div style={{ padding: '16px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                        <p style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#374151', lineHeight: '1.6' }}>
+                          <strong>Airplan</strong> is an interactive airspace visualization tool designed for pilots, aviation enthusiasts, and flight planners.
+                        </p>
+                        <p style={{ margin: '0', fontSize: '13px', color: '#6b7280', lineHeight: '1.5' }}>
+                          Version 1.0.0
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Open Source Licenses */}
+                    <div style={{ marginBottom: '24px' }}>
+                      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: '600', color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Open Source Licenses
+                      </h3>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {[
+                          { name: 'React', license: 'MIT License', url: 'https://github.com/facebook/react' },
+                          { name: 'Next.js', license: 'MIT License', url: 'https://github.com/vercel/next.js' },
+                          { name: 'Leaflet', license: 'BSD 2-Clause License', url: 'https://github.com/Leaflet/Leaflet' },
+                          { name: 'React-Leaflet', license: 'Hippocratic License', url: 'https://github.com/PaulLeCam/react-leaflet' },
+                          { name: 'Three.js', license: 'MIT License', url: 'https://github.com/mrdoob/three.js' },
+                          { name: 'React Three Fiber', license: 'MIT License', url: 'https://github.com/pmndrs/react-three-fiber' },
+                          { name: 'Recharts', license: 'MIT License', url: 'https://github.com/recharts/recharts' },
+                          { name: 'TypeScript', license: 'Apache License 2.0', url: 'https://github.com/microsoft/TypeScript' },
+                        ].map((lib) => (
+                          <div
+                            key={lib.name}
+                            style={{
+                              padding: '10px 12px',
+                              backgroundColor: '#ffffff',
+                              borderRadius: '6px',
+                              border: '1px solid #e5e7eb',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center'
+                            }}
+                          >
+                            <div>
+                              <div style={{ fontSize: '13px', fontWeight: '600', color: '#374151' }}>{lib.name}</div>
+                              <div style={{ fontSize: '11px', color: '#9ca3af' }}>{lib.license}</div>
+                            </div>
+                            <a
+                              href={lib.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                color: '#3b82f6',
+                                fontSize: '12px',
+                                textDecoration: 'none',
+                                padding: '4px 8px',
+                                borderRadius: '4px',
+                                backgroundColor: '#eff6ff'
+                              }}
+                            >
+                              View
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Data Attributions */}
+                    <div style={{ marginBottom: '24px' }}>
+                      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: '600', color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Data Attributions
+                      </h3>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {[
+                          { name: 'OpenStreetMap', description: 'Map data and tiles', url: 'https://www.openstreetmap.org/copyright' },
+                          { name: 'Esri', description: 'World imagery and topographic basemaps', url: 'https://www.esri.com/' },
+                          { name: 'OpenTopoMap', description: 'Topographic map tiles', url: 'https://opentopomap.org/' },
+                          { name: 'Open-Elevation', description: 'Elevation data API', url: 'https://open-elevation.com/' },
+                          { name: 'Nominatim', description: 'Geocoding service', url: 'https://nominatim.org/' },
+                          { name: 'FAA', description: 'US airspace data', url: 'https://www.faa.gov/' },
+                        ].map((attr) => (
+                          <div
+                            key={attr.name}
+                            style={{
+                              padding: '10px 12px',
+                              backgroundColor: '#ffffff',
+                              borderRadius: '6px',
+                              border: '1px solid #e5e7eb',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center'
+                            }}
+                          >
+                            <div>
+                              <div style={{ fontSize: '13px', fontWeight: '600', color: '#374151' }}>{attr.name}</div>
+                              <div style={{ fontSize: '11px', color: '#9ca3af' }}>{attr.description}</div>
+                            </div>
+                            <a
+                              href={attr.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                color: '#3b82f6',
+                                fontSize: '12px',
+                                textDecoration: 'none',
+                                padding: '4px 8px',
+                                borderRadius: '4px',
+                                backgroundColor: '#eff6ff'
+                              }}
+                            >
+                              Info
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* License Notice */}
+                    <div style={{ padding: '16px', backgroundColor: '#fef3c7', borderRadius: '8px', border: '1px solid #fcd34d' }}>
+                      <p style={{ margin: '0', fontSize: '12px', color: '#92400e', lineHeight: '1.5' }}>
+                        <strong>Disclaimer:</strong> This application is for informational purposes only. Always verify airspace information with official sources before flight. Not for operational use.
+                      </p>
+                    </div>
                   </div>
                 )}
 

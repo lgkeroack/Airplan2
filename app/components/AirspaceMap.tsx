@@ -1608,6 +1608,7 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         onAirspaceClassToggle={handleAirspaceClassToggle}
         altitudeRange={altitudeRange}
         onAltitudeRangeChange={setAltitudeRange}
+        onSearchLocation={handleSearchLocation}
       />
 
       {/* Route Builder UI */}
