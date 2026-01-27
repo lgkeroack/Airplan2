@@ -392,22 +392,28 @@ export default function SidePanel({
         </div>
       )}
 
-      {/* Navigation Column - Always Visible (64px) */}
+      {/* Navigation Column - Desktop: Right side, Mobile: Bottom */}
       <div
         style={{
           position: 'fixed',
-          top: 0,
-          right: 0,
-          width: '64px',
-          height: '100vh',
+          // Desktop: right side vertical bar
+          // Mobile: bottom horizontal bar
+          top: isMobile ? 'auto' : 0,
+          bottom: isMobile ? 0 : 'auto',
+          right: isMobile ? 0 : 0,
+          left: isMobile ? 0 : 'auto',
+          width: isMobile ? '100%' : '64px',
+          height: isMobile ? '60px' : '100vh',
           backgroundColor: 'white',
-          borderLeft: '1px solid #e5e7eb',
+          borderLeft: isMobile ? 'none' : '1px solid #e5e7eb',
+          borderTop: isMobile ? '1px solid #e5e7eb' : 'none',
           display: 'flex',
-          flexDirection: 'column',
+          flexDirection: isMobile ? 'row' : 'column',
           alignItems: 'center',
-          padding: '20px 0',
-          gap: '12px',
-          boxShadow: isOpen ? 'none' : '-2px 0 8px rgba(0,0,0,0.05)',
+          justifyContent: isMobile ? 'center' : 'flex-start',
+          padding: isMobile ? '0 20px' : '20px 0',
+          gap: isMobile ? '24px' : '12px',
+          boxShadow: isMobile ? '0 -2px 8px rgba(0,0,0,0.05)' : (isOpen ? 'none' : '-2px 0 8px rgba(0,0,0,0.05)'),
           zIndex: 1001,
           fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif"
         }}
@@ -456,55 +462,94 @@ export default function SidePanel({
             {activeTab === item.id && isOpen && (
               <div style={{
                 position: 'absolute',
-                right: '-1px',
-                top: '12px',
-                bottom: '12px',
-                width: '3px',
+                // Desktop: indicator on right edge
+                // Mobile: indicator on top edge
+                right: isMobile ? 'auto' : '-1px',
+                left: isMobile ? '12px' : 'auto',
+                top: isMobile ? '-1px' : '12px',
+                bottom: isMobile ? 'auto' : '12px',
+                width: isMobile ? '20px' : '3px',
+                height: isMobile ? '3px' : 'auto',
                 backgroundColor: '#3b82f6',
-                borderRadius: '3px 0 0 3px'
+                borderRadius: isMobile ? '0 0 3px 3px' : '3px 0 0 3px'
               }} />
             )}
           </button>
         ))}
       </div>
 
-      {/* Main Side Navigation Container */}
+      {/* Main Content Panel Container */}
       <div
         style={{
           position: 'fixed',
-          top: 0,
-          right: 64,
-          height: '100vh',
+          // Desktop: to the left of nav bar
+          // Mobile: slides up from bottom (above nav bar)
+          top: isMobile ? 'auto' : 0,
+          bottom: isMobile ? '60px' : 'auto',
+          right: isMobile ? 0 : 64,
+          left: isMobile ? 0 : 'auto',
+          height: isMobile ? (isOpen ? '55vh' : '0') : '100vh',
+          width: isMobile ? '100%' : 'auto',
           display: 'flex',
           zIndex: 1000,
-          fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif"
+          fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif",
+          pointerEvents: isOpen ? 'auto' : 'none'
         }}
       >
-        {/* Content Panel (Expands to the left) */}
+        {/* Content Panel */}
         <div
           style={{
-            width: isOpen ? (isMobile ? 'calc(100vw - 64px)' : '400px') : '0',
+            width: isMobile ? '100%' : (isOpen ? '400px' : '0'),
+            height: '100%',
             backgroundColor: 'white',
-            height: isMobile ? (isOpen ? '50vh' : '0') : '100%',
-            position: isMobile ? 'fixed' : 'relative',
-            bottom: isMobile ? 0 : 'auto',
-            left: isMobile ? 0 : 'auto',
-            right: isMobile ? 0 : 'auto',
             overflowX: 'hidden',
             overflowY: 'auto',
             transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-            boxShadow: isOpen ? (isMobile ? '0 -4px 15px rgba(0,0,0,0.1)' : '-4px 0 15px rgba(0,0,0,0.1)') : 'none',
+            boxShadow: isOpen ? (isMobile ? '0 -4px 15px rgba(0,0,0,0.15)' : '-4px 0 15px rgba(0,0,0,0.1)') : 'none',
             display: 'flex',
             flexDirection: 'column',
             borderLeft: !isMobile && isOpen ? '1px solid #e5e7eb' : 'none',
-            borderTop: isMobile && isOpen ? '1px solid #e5e7eb' : 'none'
+            borderTop: isMobile && isOpen ? '1px solid #e5e7eb' : 'none',
+            borderRadius: isMobile ? '16px 16px 0 0' : '0',
+            opacity: isOpen ? 1 : 0,
+            transform: isMobile ? (isOpen ? 'translateY(0)' : 'translateY(100%)') : 'none'
           }}
         >
           {isOpen && (
             <div style={{ width: isMobile ? '100%' : '400px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+              {/* Mobile drag handle */}
+              {isMobile && (
+                <div
+                  style={{
+                    width: '100%',
+                    padding: '8px 0',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    cursor: 'grab'
+                  }}
+                  onClick={onToggle}
+                >
+                  <div style={{
+                    width: '40px',
+                    height: '4px',
+                    backgroundColor: '#d1d5db',
+                    borderRadius: '2px'
+                  }} />
+                </div>
+              )}
               {/* Content Header */}
-              <div style={{ padding: '24px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, backgroundColor: '#ffffff', zIndex: 1000 }}>
-                <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.02em', color: '#111827' }}>
+              <div style={{
+                padding: isMobile ? '12px 16px' : '24px',
+                borderBottom: '1px solid #e5e7eb',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: '#ffffff',
+                zIndex: 1000
+              }}>
+                <h2 style={{ margin: 0, fontSize: isMobile ? '16px' : '20px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.02em', color: '#111827' }}>
                   {activeTab === 'layers' ? 'Map Layers' : activeTab === 'search' ? 'Search' : 'Air Column'}
                 </h2>
                 <button
@@ -533,7 +578,7 @@ export default function SidePanel({
               </div>
 
               {/* Dynamic Content */}
-              <div style={{ flex: 1, padding: '24px' }}>
+              <div style={{ flex: 1, padding: isMobile ? '16px' : '24px', paddingBottom: isMobile ? '24px' : '24px' }}>
                 {activeTab === 'layers' && (
                   <div>
                     {/* Basemap Selection Dropdown */}
