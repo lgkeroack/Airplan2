@@ -69,7 +69,7 @@ interface SidePanelProps {
   onFetchRadiusChange?: (radius: number) => void
   onElevationCellsChange?: (cells: ElevationCellData[], minElev: number, maxElev: number) => void
   selectedRoute?: RouteData
-  activeTab?: 'layers' | 'aircolumn' | 'search'
+  activeTab?: 'layers' | 'aircolumn' | 'search' | 'about'
   // Airspace filtering
   hiddenAirspaceClasses?: Set<string>
   onAirspaceClassToggle?: (airspaceClass: string) => void
@@ -107,8 +107,8 @@ export default function SidePanel({
   altitudeRange = { min: 0, max: 60000 },
   onAltitudeRangeChange,
 }: SidePanelProps) {
-  const [activeTab, setActiveTab] = useState<'layers' | 'aircolumn' | 'search' | undefined>(activeTabProp)
-  const [activeTabState, setActiveTabState] = useState<'layers' | 'aircolumn' | 'search' | undefined>(activeTabProp)
+  const [activeTab, setActiveTab] = useState<'layers' | 'aircolumn' | 'search' | 'about' | undefined>(activeTabProp)
+  const [activeTabState, setActiveTabState] = useState<'layers' | 'aircolumn' | 'search' | 'about' | undefined>(activeTabProp)
   
   // Update activeTab when prop changes
   useEffect(() => { 
@@ -405,13 +405,41 @@ export default function SidePanel({
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          padding: '20px 0',
-          gap: '12px',
+          padding: '12px 0',
+          gap: '8px',
           boxShadow: isOpen ? 'none' : '-2px 0 8px rgba(0,0,0,0.05)',
           zIndex: 1001,
           fontFamily: "'Futura', 'Trebuchet MS', Arial, sans-serif"
         }}
       >
+        {/* App Logo */}
+        <div
+          style={{
+            width: '48px',
+            height: '48px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: '8px',
+            cursor: 'pointer',
+            borderRadius: '8px',
+            transition: 'background-color 0.2s',
+          }}
+          onClick={() => {
+            setActiveTab('about' as any)
+            if (!isOpen) onToggle()
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+          title="About Airplan"
+        >
+          <svg width="40" height="40" viewBox="0 0 200 50">
+            <text x="10" y="38" style={{ fontFamily: "'Nunito', 'Trebuchet MS', Arial, sans-serif", fontWeight: 700, fontSize: '36px' }}>
+              <tspan fill="#4CAF50">air</tspan><tspan fill="#2196F3">plan</tspan>
+            </text>
+          </svg>
+        </div>
+
         {/* Hamburger / Toggle */}
         <button
           onClick={onToggle}
@@ -445,6 +473,7 @@ export default function SidePanel({
           { id: 'search', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z', label: 'Search' },
           { id: 'aircolumn', icon: 'M18 20V10 M12 20V4 M6 20v-6', label: 'Air Column' },
           { id: 'layers', icon: 'M12 2L2 7l10 5l10-5l-10-5z M2 17l10 5l10-5 M2 12l10 5l10-5', label: 'Layers' },
+          { id: 'about', icon: 'M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z M12 16v-4 M12 8h.01', label: 'About' },
         ].map((item) => (
           <button
             key={item.id}
@@ -533,7 +562,7 @@ export default function SidePanel({
               {/* Content Header */}
               <div style={{ padding: '24px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, backgroundColor: '#ffffff', zIndex: 1000 }}>
                 <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.02em', color: '#111827' }}>
-                  {activeTab === 'layers' ? 'Map Layers' : activeTab === 'search' ? 'Search' : 'Air Column'}
+                  {activeTab === 'layers' ? 'Map Layers' : activeTab === 'search' ? 'Search' : activeTab === 'about' ? 'About' : 'Air Column'}
                 </h2>
                 <button
                   onClick={onToggle}
@@ -1345,6 +1374,93 @@ export default function SidePanel({
                         {selectedRoute ? 'Loading route data...' : 'Click on the map to view air column or draw a route'}
                       </div>
                     )}
+                  </div>
+                )}
+
+                {activeTab === 'about' && (
+                  <div style={{ textAlign: 'center' }}>
+                    {/* Logo */}
+                    <div style={{ marginBottom: '24px' }}>
+                      <svg width="200" height="50" viewBox="0 0 200 50" style={{ maxWidth: '100%' }}>
+                        <text x="10" y="38" style={{ fontFamily: "'Nunito', 'Trebuchet MS', Arial, sans-serif", fontWeight: 700, fontSize: '36px' }}>
+                          <tspan fill="#4CAF50">air</tspan><tspan fill="#2196F3">plan</tspan>
+                        </text>
+                      </svg>
+                    </div>
+
+                    {/* App Description */}
+                    <div style={{
+                      padding: '20px',
+                      backgroundColor: '#f9fafb',
+                      borderRadius: '12px',
+                      border: '1px solid #e5e7eb',
+                      marginBottom: '20px'
+                    }}>
+                      <h3 style={{
+                        margin: '0 0 12px 0',
+                        fontSize: '16px',
+                        fontWeight: '600',
+                        color: '#111827'
+                      }}>
+                        Airspace Visualization Tool
+                      </h3>
+                      <p style={{
+                        margin: 0,
+                        fontSize: '14px',
+                        color: '#6b7280',
+                        lineHeight: '1.6'
+                      }}>
+                        Airplan helps pilots and aviation enthusiasts visualize airspace data
+                        overlaid on topographic maps. Explore air columns, plan routes, and
+                        understand the vertical structure of controlled airspace.
+                      </p>
+                    </div>
+
+                    {/* Features List */}
+                    <div style={{
+                      textAlign: 'left',
+                      padding: '16px',
+                      backgroundColor: '#f9fafb',
+                      borderRadius: '12px',
+                      border: '1px solid #e5e7eb',
+                      marginBottom: '20px'
+                    }}>
+                      <h4 style={{
+                        margin: '0 0 12px 0',
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        color: '#111827',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em'
+                      }}>
+                        Features
+                      </h4>
+                      <ul style={{
+                        margin: 0,
+                        padding: '0 0 0 20px',
+                        fontSize: '13px',
+                        color: '#4b5563',
+                        lineHeight: '1.8'
+                      }}>
+                        <li>Interactive 3D airspace visualization</li>
+                        <li>Air column analysis at any point</li>
+                        <li>Route planning with terrain profiles</li>
+                        <li>Multiple basemap options</li>
+                        <li>Airspace class filtering</li>
+                        <li>TFR and NOTAM overlay support</li>
+                      </ul>
+                    </div>
+
+                    {/* Version Info */}
+                    <div style={{
+                      fontSize: '12px',
+                      color: '#9ca3af',
+                      padding: '12px',
+                      borderTop: '1px solid #e5e7eb'
+                    }}>
+                      <div style={{ marginBottom: '4px' }}>Version 1.0.0</div>
+                      <div>Built with Next.js & React-Leaflet</div>
+                    </div>
                   </div>
                 )}
               </div>

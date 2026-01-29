@@ -3,8 +3,8 @@ import React from 'react'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Topographic Airspace App',
-  description: 'A web application for topographic airspace visualization',
+  title: 'Airplan - Airspace Visualization',
+  description: 'Airplan helps pilots visualize airspace data on topographic maps. Explore air columns, plan routes, and understand controlled airspace.',
 }
 
 export default function RootLayout({

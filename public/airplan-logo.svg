@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 50" width="200" height="50">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@700&amp;display=swap');
+      .logo-text { font-family: 'Nunito', 'Trebuchet MS', Arial, sans-serif; font-weight: 700; font-size: 36px; }
+    </style>
+  </defs>
+  <text x="10" y="38" class="logo-text">
+    <tspan fill="#4CAF50">air</tspan><tspan fill="#2196F3">plan</tspan>
+  </text>
+</svg>
