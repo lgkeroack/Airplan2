@@ -1728,6 +1728,28 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
       )}
       {/* Terrain Profile is now displayed in the side panel air column tab */}
 
+      {/* Airplan Logo Watermark */}
+      <div
+        style={{
+          position: 'fixed',
+          bottom: '10px',
+          left: '10px',
+          zIndex: 1000,
+          backgroundColor: 'rgba(255, 255, 255, 0.9)',
+          borderRadius: '6px',
+          padding: '4px 8px',
+          boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
+          cursor: 'pointer',
+        }}
+        title="About Airplan"
+      >
+        <svg width="80" height="20" viewBox="0 0 200 50">
+          <text x="10" y="38" style={{ fontFamily: "'Nunito', 'Trebuchet MS', Arial, sans-serif", fontWeight: 700, fontSize: '36px' }}>
+            <tspan fill="#4CAF50">air</tspan><tspan fill="#2196F3">plan</tspan>
+          </text>
+        </svg>
+      </div>
+
     </div>
   )
 }
