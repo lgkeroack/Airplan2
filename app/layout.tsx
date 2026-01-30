@@ -5,6 +5,9 @@ import './globals.css'
 export const metadata: Metadata = {
   title: 'Airplan - Airspace Visualization',
   description: 'Airplan helps pilots visualize airspace data on topographic maps. Explore air columns, plan routes, and understand controlled airspace.',
+  icons: {
+    icon: '/airplan-icon.svg',
+  },
 }
 
 export default function RootLayout({

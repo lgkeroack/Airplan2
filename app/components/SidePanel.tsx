@@ -415,8 +415,8 @@ export default function SidePanel({
         {/* App Logo */}
         <div
           style={{
-            width: '48px',
-            height: '48px',
+            width: '44px',
+            height: '44px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -433,9 +433,9 @@ export default function SidePanel({
           onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
           title="About Airplan"
         >
-          <svg width="40" height="40" viewBox="0 0 200 50">
-            <text x="10" y="38" style={{ fontFamily: "'Nunito', 'Trebuchet MS', Arial, sans-serif", fontWeight: 700, fontSize: '36px' }}>
-              <tspan fill="#4CAF50">air</tspan><tspan fill="#2196F3">plan</tspan>
+          <svg width="36" height="36" viewBox="0 0 32 32">
+            <text x="2" y="26" style={{ fontFamily: "'Nunito', 'Trebuchet MS', Arial, sans-serif", fontWeight: 700, fontSize: '28px', fontStyle: 'italic' }}>
+              <tspan fill="#4CAF50">a</tspan><tspan fill="#2196F3">p</tspan>
             </text>
           </svg>
         </div>
