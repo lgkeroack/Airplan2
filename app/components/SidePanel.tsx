@@ -415,12 +415,12 @@ export default function SidePanel({
         {/* App Logo */}
         <div
           style={{
-            width: '44px',
-            height: '44px',
+            width: '48px',
+            height: '48px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            marginBottom: '8px',
+            marginBottom: '16px',
             cursor: 'pointer',
             borderRadius: '8px',
             transition: 'background-color 0.2s',
@@ -433,40 +433,12 @@ export default function SidePanel({
           onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
           title="About Airplan"
         >
-          <svg width="36" height="36" viewBox="0 0 32 32">
-            <text x="2" y="26" style={{ fontFamily: "'Nunito', 'Trebuchet MS', Arial, sans-serif", fontWeight: 700, fontSize: '28px', fontStyle: 'italic' }}>
-              <tspan fill="#4CAF50">a</tspan><tspan fill="#2196F3">p</tspan>
+          <svg width="40" height="40" viewBox="0 0 40 40">
+            <text x="3" y="30" style={{ fontFamily: "'Nunito', 'Trebuchet MS', Arial, sans-serif", fontWeight: 700, fontSize: '28px' }}>
+              <tspan fill="#7CB342">a</tspan><tspan fill="#42A5F5">p</tspan>
             </text>
           </svg>
         </div>
-
-        {/* Hamburger / Toggle */}
-        <button
-          onClick={onToggle}
-          style={{
-            width: '40px',
-            height: '40px',
-            borderRadius: '8px',
-            border: 'none',
-            backgroundColor: 'transparent',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#374151',
-            transition: 'background-color 0.2s',
-            marginBottom: '20px'
-          }}
-          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
-          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-          title={isOpen ? "Collapse Menu" : "Expand Menu"}
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="3" y1="12" x2="21" y2="12" />
-            <line x1="3" y1="6" x2="21" y2="6" />
-            <line x1="3" y1="18" x2="21" y2="18" />
-          </svg>
-        </button>
 
         {/* Navigation Items */}
         {[
@@ -1383,7 +1355,7 @@ export default function SidePanel({
                     <div style={{ marginBottom: '24px' }}>
                       <svg width="200" height="50" viewBox="0 0 200 50" style={{ maxWidth: '100%' }}>
                         <text x="10" y="38" style={{ fontFamily: "'Nunito', 'Trebuchet MS', Arial, sans-serif", fontWeight: 700, fontSize: '36px' }}>
-                          <tspan fill="#4CAF50">air</tspan><tspan fill="#2196F3">plan</tspan>
+                          <tspan fill="#7CB342">air</tspan><tspan fill="#42A5F5">plan</tspan>
                         </text>
                       </svg>
                     </div>
@@ -1416,7 +1388,7 @@ export default function SidePanel({
                       </p>
                     </div>
 
-                    {/* Features List */}
+                    {/* Open Source Credits */}
                     <div style={{
                       textAlign: 'left',
                       padding: '16px',
@@ -1433,22 +1405,53 @@ export default function SidePanel({
                         textTransform: 'uppercase',
                         letterSpacing: '0.05em'
                       }}>
-                        Features
+                        Open Source Credits
                       </h4>
                       <ul style={{
                         margin: 0,
-                        padding: '0 0 0 20px',
-                        fontSize: '13px',
+                        padding: '0 0 0 16px',
+                        fontSize: '12px',
                         color: '#4b5563',
-                        lineHeight: '1.8'
+                        lineHeight: '2'
                       }}>
-                        <li>Interactive 3D airspace visualization</li>
-                        <li>Air column analysis at any point</li>
-                        <li>Route planning with terrain profiles</li>
-                        <li>Multiple basemap options</li>
-                        <li>Airspace class filtering</li>
-                        <li>TFR and NOTAM overlay support</li>
+                        <li><strong>Next.js</strong> - MIT License</li>
+                        <li><strong>React</strong> - MIT License</li>
+                        <li><strong>Leaflet</strong> - BSD 2-Clause License</li>
+                        <li><strong>React-Leaflet</strong> - Hippocratic License</li>
+                        <li><strong>Three.js</strong> - MIT License</li>
+                        <li><strong>OpenStreetMap</strong> - ODbL License</li>
+                        <li><strong>Mapbox</strong> - Mapbox ToS</li>
+                        <li><strong>FAA Airspace Data</strong> - Public Domain</li>
                       </ul>
+                    </div>
+
+                    {/* License */}
+                    <div style={{
+                      textAlign: 'left',
+                      padding: '16px',
+                      backgroundColor: '#f0fdf4',
+                      borderRadius: '12px',
+                      border: '1px solid #bbf7d0',
+                      marginBottom: '20px'
+                    }}>
+                      <h4 style={{
+                        margin: '0 0 8px 0',
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        color: '#166534',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em'
+                      }}>
+                        License
+                      </h4>
+                      <p style={{
+                        margin: 0,
+                        fontSize: '12px',
+                        color: '#166534',
+                        lineHeight: '1.6'
+                      }}>
+                        Airplan is open source software released under the MIT License.
+                      </p>
                     </div>
 
                     {/* Version Info */}
