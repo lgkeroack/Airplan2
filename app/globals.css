@@ -76,6 +76,15 @@ a {
   font-family: 'Futura', 'Trebuchet MS', Arial, sans-serif;
 }
 
+/* Move attribution control to avoid sidebar overlap */
+.leaflet-control-attribution {
+  margin-right: 72px !important; /* 64px sidebar + 8px padding */
+  max-width: calc(100vw - 150px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
 /* Ensure dragging works properly */
 .leaflet-grab {
   cursor: grab !important;

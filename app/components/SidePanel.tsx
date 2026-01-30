@@ -434,8 +434,8 @@ export default function SidePanel({
           title="About Airplan"
         >
           <svg width="40" height="40" viewBox="0 0 40 40">
-            <text x="4" y="32" style={{ fontFamily: "'Nunito', 'Trebuchet MS', Arial, sans-serif", fontWeight: 700, fontSize: '32px', fontStyle: 'italic' }}>
-              <tspan fill="#4CAF50">a</tspan><tspan fill="#2196F3">p</tspan>
+            <text x="3" y="30" style={{ fontFamily: "'Nunito', 'Trebuchet MS', Arial, sans-serif", fontWeight: 700, fontSize: '28px' }}>
+              <tspan fill="#7CB342">a</tspan><tspan fill="#42A5F5">p</tspan>
             </text>
           </svg>
         </div>
@@ -1355,7 +1355,7 @@ export default function SidePanel({
                     <div style={{ marginBottom: '24px' }}>
                       <svg width="200" height="50" viewBox="0 0 200 50" style={{ maxWidth: '100%' }}>
                         <text x="10" y="38" style={{ fontFamily: "'Nunito', 'Trebuchet MS', Arial, sans-serif", fontWeight: 700, fontSize: '36px' }}>
-                          <tspan fill="#4CAF50">air</tspan><tspan fill="#2196F3">plan</tspan>
+                          <tspan fill="#7CB342">air</tspan><tspan fill="#42A5F5">plan</tspan>
                         </text>
                       </svg>
                     </div>

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="40" height="40">
-  <text x="4" y="32" style="font-family: 'Nunito', 'Trebuchet MS', Arial, sans-serif; font-weight: 700; font-size: 32px; font-style: italic;">
-    <tspan fill="#4CAF50">a</tspan><tspan fill="#2196F3">p</tspan>
+  <text x="3" y="30" style="font-family: 'Nunito', 'Trebuchet MS', Arial, sans-serif; font-weight: 700; font-size: 28px;">
+    <tspan fill="#7CB342">a</tspan><tspan fill="#42A5F5">p</tspan>
   </text>
 </svg>
