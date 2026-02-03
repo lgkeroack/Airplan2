@@ -1368,23 +1368,21 @@ export default function SidePanel({
                       border: '1px solid #e5e7eb',
                       marginBottom: '20px'
                     }}>
-                      <h3 style={{
-                        margin: '0 0 12px 0',
-                        fontSize: '16px',
-                        fontWeight: '600',
-                        color: '#111827'
-                      }}>
-                        Airspace Visualization Tool
-                      </h3>
                       <p style={{
                         margin: 0,
                         fontSize: '14px',
                         color: '#6b7280',
                         lineHeight: '1.6'
                       }}>
-                        Airplan helps pilots and aviation enthusiasts visualize airspace data
-                        overlaid on topographic maps. Explore air columns, plan routes, and
-                        understand the vertical structure of controlled airspace.
+                        Airplan lets you visualize airspace data in 3D, and makes complex airspaces simple. All credits go to{' '}
+                        <a
+                          href="https://www.linkedin.com/in/louis-gabriel-k%C3%A9roack-930465b1/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ color: '#3b82f6', textDecoration: 'underline' }}
+                        >
+                          this guy
+                        </a>.
                       </p>
                     </div>
 
