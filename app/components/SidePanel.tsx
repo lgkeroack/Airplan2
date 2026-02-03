@@ -1384,6 +1384,22 @@ export default function SidePanel({
                           this guy
                         </a>.
                       </p>
+                      <p style={{
+                        margin: '12px 0 0 0',
+                        fontSize: '14px',
+                        color: '#6b7280',
+                        lineHeight: '1.6'
+                      }}>
+                        Have feedback or found an issue?{' '}
+                        <a
+                          href="https://docs.google.com/forms/d/e/1FAIpQLScU75oFyvGgWVR6Au_0LbF3sy-3KDqGqznWJ1wYQVopfTNnIg/viewform?usp=publish-editor"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ color: '#3b82f6', textDecoration: 'underline' }}
+                        >
+                          Let us know
+                        </a>.
+                      </p>
                     </div>
 
                     {/* Open Source Credits */}
