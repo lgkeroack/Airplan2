@@ -417,30 +417,38 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
   // Use a unique ID to track this instance
   const instanceId = useId()
   const mapContainerRef = useRef<HTMLDivElement>(null)
-  // Generate a fresh container id per mount so dev-mode double-mounts
-  // don't reuse the same DOM node for Leaflet (prevents _initContainer errors)
-  const containerIdRef = useRef<string>(`leaflet-${Math.random().toString(36).slice(2)}`)
+  // Track the actual Leaflet map instance for cleanup
+  const leafletMapRef = useRef<LeafletMap | null>(null)
+
+  // Use state for container key so we can force a fresh container on remount
+  const [containerKey, setContainerKey] = useState(() => `leaflet-${Math.random().toString(36).slice(2)}`)
 
   // Defer mounting the MapContainer until after commit to avoid
   // Leaflet initialization during React StrictMode's mount/unmount/mount.
   const [showMap, setShowMap] = useState(false)
-  useEffect(() => {
-    setShowMap(true)
-    return () => setShowMap(false)
-  }, [])
 
-  // Ensure we remove the Leaflet map instance on unmount to avoid
-  // leftover DOM state that can cause "reused by another instance" errors.
   useEffect(() => {
+    // Small delay to ensure any previous cleanup is complete
+    const timer = setTimeout(() => {
+      setShowMap(true)
+    }, 50)
+
     return () => {
-      if (mapRef.current) {
+      clearTimeout(timer)
+      setShowMap(false)
+
+      // Clean up the Leaflet map instance
+      if (leafletMapRef.current) {
         try {
-          mapRef.current.remove()
+          leafletMapRef.current.remove()
         } catch (e) {
           // ignore removal errors
         }
-        mapRef.current = null
+        leafletMapRef.current = null
       }
+
+      // Generate a new container key for next mount
+      setContainerKey(`leaflet-${Math.random().toString(36).slice(2)}`)
     }
   }, [])
 
@@ -1185,29 +1193,18 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     <div style={{ height: '100%', width: '100%', position: 'relative' }}>
       <div
         id={`leaflet-wrapper-${instanceId}`}
-        ref={el => {
-          // Only set the ref if not already set, to avoid TypeScript read-only error
-          if (!mapContainerRef.current && el) {
-            (mapContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el as HTMLDivElement | null;
-          }
-          if (el) {
-            const existing = el.querySelector('.leaflet-container') as any;
-            if (existing && existing._leaflet_id) {
-              try {
-                delete existing._leaflet_id;
-              } catch (e) {
-                // ignore
-              }
-            }
-          }
-        }}
+        ref={mapContainerRef}
         style={{ height: '100%', width: '100%' }}
       >
         {showMap && (
           <MapContainer
-            key={containerIdRef.current}
-            id={containerIdRef.current}
-            ref={mapRef}
+            key={containerKey}
+            id={containerKey}
+            ref={(map) => {
+              // Keep both refs in sync
+              mapRef.current = map
+              leafletMapRef.current = map
+            }}
             center={mapCenter}
             zoom={mapZoom}
             style={{ height: '100%', width: '100%', zIndex: 1 }}
