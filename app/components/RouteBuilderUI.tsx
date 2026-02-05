@@ -1,4 +1,4 @@
-import React, { useRef } from 'react'
+import React, { useRef, useState, useEffect } from 'react'
 import * as toGeoJSON from 'togeojson'
 
 interface RouteBuilderUIProps {
@@ -25,6 +25,16 @@ export default function RouteBuilderUI({
     canRedo
 }: RouteBuilderUIProps) {
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const [isMobile, setIsMobile] = useState(false)
+
+    useEffect(() => {
+        const checkMobile = () => {
+            setIsMobile(window.innerWidth < 640)
+        }
+        checkMobile()
+        window.addEventListener('resize', checkMobile)
+        return () => window.removeEventListener('resize', checkMobile)
+    }, [])
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
@@ -89,35 +99,58 @@ export default function RouteBuilderUI({
             onDoubleClick={(e) => e.stopPropagation()}
             style={{
                 position: 'absolute',
-                bottom: '30px',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                backgroundColor: 'rgba(17, 24, 39, 0.9)',
+                bottom: isMobile ? '16px' : '30px',
+                left: isMobile ? '8px' : '50%',
+                right: isMobile ? '8px' : 'auto',
+                transform: isMobile ? 'none' : 'translateX(-50%)',
+                backgroundColor: 'rgba(17, 24, 39, 0.95)',
                 backdropFilter: 'blur(10px)',
-                padding: '16px 24px',
-                borderRadius: '16px',
+                padding: isMobile ? '12px 16px' : '16px 24px',
+                borderRadius: isMobile ? '12px' : '16px',
                 color: 'white',
                 display: 'flex',
-                alignItems: 'center',
-                gap: '24px',
-                boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
+                flexDirection: isMobile ? 'column' : 'row',
+                alignItems: isMobile ? 'stretch' : 'center',
+                gap: isMobile ? '12px' : '24px',
+                boxShadow: '0 10px 25px rgba(0,0,0,0.3)',
                 zIndex: 1000,
                 fontFamily: "'Inter', sans-serif",
                 border: '1px solid rgba(255,255,255,0.1)',
-                minWidth: '450px'
+                maxWidth: isMobile ? 'none' : '90vw'
             }}>
             {/* Stats Section */}
-            <div style={{ display: 'flex', gap: '24px', paddingRight: '24px', borderRight: '1px solid rgba(255,255,255,0.2)' }}>
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <div style={{
+                display: 'flex',
+                gap: isMobile ? '12px' : '24px',
+                paddingRight: isMobile ? '0' : '24px',
+                paddingBottom: isMobile ? '12px' : '0',
+                borderRight: isMobile ? 'none' : '1px solid rgba(255,255,255,0.2)',
+                borderBottom: isMobile ? '1px solid rgba(255,255,255,0.2)' : 'none',
+                justifyContent: isMobile ? 'center' : 'flex-start'
+            }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMobile ? 'center' : 'flex-start' }}>
                     <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#9ca3af' }}>Total Distance</span>
-                    <span style={{ fontSize: '18px', fontWeight: 'bold', fontFamily: 'monospace' }}>
-                        {formatDistance(distance)} <span style={{ fontSize: '14px', color: '#9ca3af', fontWeight: 'normal' }}>({formatDistanceFt(distance)})</span>
+                    <span style={{ fontSize: isMobile ? '16px' : '18px', fontWeight: 'bold', fontFamily: 'monospace' }}>
+                        {formatDistance(distance)} <span style={{ fontSize: isMobile ? '12px' : '14px', color: '#9ca3af', fontWeight: 'normal' }}>({formatDistanceFt(distance)})</span>
                     </span>
                 </div>
             </div>
 
             {/* Controls Section */}
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flex: 1 }}>
+            <div style={{
+                display: 'flex',
+                flexDirection: isMobile ? 'column' : 'row',
+                gap: isMobile ? '8px' : '12px',
+                alignItems: isMobile ? 'stretch' : 'center',
+                flex: 1
+            }}>
+                {/* Top row on mobile: undo/redo + import */}
+                <div style={{
+                    display: 'flex',
+                    gap: isMobile ? '8px' : '12px',
+                    alignItems: 'center',
+                    justifyContent: isMobile ? 'center' : 'flex-start'
+                }}>
                 <div style={{ display: 'flex', gap: '4px', backgroundColor: 'rgba(255,255,255,0.1)', padding: '4px', borderRadius: '8px' }}>
                     <button
                         onClick={onUndo}
@@ -174,13 +207,13 @@ export default function RouteBuilderUI({
                         border: '1px solid rgba(59, 130, 246, 0.4)',
                         color: '#60a5fa',
                         cursor: 'pointer',
-                        padding: '8px 16px',
+                        padding: isMobile ? '8px 12px' : '8px 16px',
                         borderRadius: '8px',
-                        fontSize: '14px',
+                        fontSize: isMobile ? '13px' : '14px',
                         fontWeight: 600,
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '8px',
+                        gap: '6px',
                         transition: 'all 0.2s'
                     }}
                     onMouseEnter={(e) => {
@@ -192,13 +225,14 @@ export default function RouteBuilderUI({
                         e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.4)'
                     }}
                 >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg width={isMobile ? 16 : 18} height={isMobile ? 16 : 18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                         <polyline points="17 8 12 3 7 8" />
                         <line x1="12" y1="3" x2="12" y2="15" />
                     </svg>
                     Import
                 </button>
+                </div>
                 <input
                     type="file"
                     ref={fileInputRef}
@@ -207,8 +241,15 @@ export default function RouteBuilderUI({
                     style={{ display: 'none' }}
                 />
 
-                <div style={{ flex: 1 }} />
+                {!isMobile && <div style={{ flex: 1 }} />}
 
+                {/* Action buttons row */}
+                <div style={{
+                    display: 'flex',
+                    gap: '8px',
+                    alignItems: 'center',
+                    justifyContent: isMobile ? 'center' : 'flex-end'
+                }}>
                 <button
                     onClick={onCancel}
                     style={{
@@ -216,16 +257,17 @@ export default function RouteBuilderUI({
                         border: '1px solid rgba(239, 68, 68, 0.5)',
                         color: '#f87171',
                         cursor: 'pointer',
-                        padding: '8px 16px',
+                        padding: isMobile ? '10px 14px' : '8px 16px',
                         borderRadius: '8px',
-                        fontSize: '14px',
+                        fontSize: isMobile ? '13px' : '14px',
                         fontWeight: 600,
-                        transition: 'all 0.2s'
+                        transition: 'all 0.2s',
+                        flex: isMobile ? 1 : 'none'
                     }}
                     onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)'}
                     onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                 >
-                    Stop Drawing
+                    {isMobile ? 'Cancel' : 'Stop Drawing'}
                 </button>
                 {onFinish && (
                     <button
@@ -235,18 +277,20 @@ export default function RouteBuilderUI({
                             border: 'none',
                             color: 'white',
                             cursor: 'pointer',
-                            padding: '8px 16px',
+                            padding: isMobile ? '10px 14px' : '8px 16px',
                             borderRadius: '8px',
-                            fontSize: '14px',
+                            fontSize: isMobile ? '13px' : '14px',
                             fontWeight: 700,
-                            transition: 'all 0.15s'
+                            transition: 'all 0.15s',
+                            flex: isMobile ? 1 : 'none'
                         }}
                         onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.05)'}
                         onMouseLeave={(e) => e.currentTarget.style.filter = 'none'}
                     >
-                        Finish Route
+                        {isMobile ? 'Finish' : 'Finish Route'}
                     </button>
                 )}
+                </div>
             </div>
         </div>
     )
