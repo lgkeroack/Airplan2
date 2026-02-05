@@ -32,12 +32,17 @@ echo "Checking which branches need to be merged..."
 branches=$(git branch -r | grep -v 'HEAD' | grep -v 'main' | sed 's/origin\///' | tr '\n' ' ')
 
 for branch in $branches; do
-    # Check if branch is already merged
-    if git branch --merged | grep -q "$branch"; then
+    # Check if branch is already merged into main
+    # Note: We exclude 'main' from the merge loop to avoid self-merging.
+    # After rename, this ensures we're only merging feature branches.
+    if git merge-base --is-ancestor "origin/$branch" HEAD; then
         echo "Branch $branch is already merged"
     else
         echo "Merging $branch..."
-        # Use the latest version in case of conflicts (theirs strategy)
+        # WARNING: Using '-X theirs' strategy will automatically accept all incoming changes
+        # in case of conflicts, prioritizing the latest updates per requirements.
+        # This means any conflicts will be resolved by taking the changes from the branch
+        # being merged, not the current branch. Review carefully if you have uncommitted work.
         git merge "origin/$branch" -X theirs -m "Merge branch '$branch' (prioritizing latest updates)"
     fi
 done
