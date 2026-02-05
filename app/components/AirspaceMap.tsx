@@ -1344,7 +1344,6 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
             url="https://thermal.kk7.ch/tiles/skyways_all_all/{z}/{x}/{y}.png?src=airplan2"
             maxNativeZoom={13}
             maxZoom={19}
-            tms={true}
             opacity={layers.find(l => l.id === 'thermal-skyways')?.opacity ?? 0.7}
           />
         )}
@@ -1356,7 +1355,6 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
             url="https://thermal.kk7.ch/tiles/thermals_jul_07/{z}/{x}/{y}.png?src=airplan2"
             maxNativeZoom={12}
             maxZoom={19}
-            tms={true}
             opacity={layers.find(l => l.id === 'thermal-hotspots')?.opacity ?? 0.7}
           />
         )}
