@@ -750,11 +750,40 @@ export default function SidePanel({
                         Altitude Range
                       </label>
                       <div style={{ padding: '12px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                          <span style={{ fontSize: '12px', color: '#6b7280' }}>Min: {altitudeRange.min.toLocaleString()} ft</span>
-                          <span style={{ fontSize: '12px', color: '#6b7280' }}>Max: {altitudeRange.max.toLocaleString()} ft</span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                          <span style={{ fontSize: '12px', fontWeight: '500', color: '#374151', backgroundColor: '#e5e7eb', padding: '2px 8px', borderRadius: '4px' }}>
+                            {altitudeRange.min.toLocaleString()} ft
+                          </span>
+                          <span style={{ fontSize: '11px', color: '#9ca3af' }}>to</span>
+                          <span style={{ fontSize: '12px', fontWeight: '500', color: '#374151', backgroundColor: '#e5e7eb', padding: '2px 8px', borderRadius: '4px' }}>
+                            {altitudeRange.max.toLocaleString()} ft
+                          </span>
                         </div>
-                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                        {/* Dual-handle range slider */}
+                        <div style={{ position: 'relative', height: '24px', marginBottom: '8px' }}>
+                          {/* Track background */}
+                          <div style={{
+                            position: 'absolute',
+                            top: '50%',
+                            left: '0',
+                            right: '0',
+                            height: '6px',
+                            transform: 'translateY(-50%)',
+                            backgroundColor: '#e5e7eb',
+                            borderRadius: '3px'
+                          }} />
+                          {/* Active range highlight */}
+                          <div style={{
+                            position: 'absolute',
+                            top: '50%',
+                            left: `${(altitudeRange.min / 60000) * 100}%`,
+                            right: `${100 - (altitudeRange.max / 60000) * 100}%`,
+                            height: '6px',
+                            transform: 'translateY(-50%)',
+                            backgroundColor: '#3b82f6',
+                            borderRadius: '3px'
+                          }} />
+                          {/* Min slider */}
                           <input
                             type="range"
                             min="0"
@@ -767,8 +796,22 @@ export default function SidePanel({
                                 onAltitudeRangeChange?.({ min: newMin, max: altitudeRange.max })
                               }
                             }}
-                            style={{ flex: 1, accentColor: '#3b82f6', cursor: 'pointer' }}
+                            style={{
+                              position: 'absolute',
+                              top: '0',
+                              left: '0',
+                              width: '100%',
+                              height: '100%',
+                              WebkitAppearance: 'none',
+                              appearance: 'none',
+                              background: 'transparent',
+                              pointerEvents: 'none',
+                              cursor: 'pointer',
+                              zIndex: 3
+                            }}
+                            className="dual-range-thumb"
                           />
+                          {/* Max slider */}
                           <input
                             type="range"
                             min="0"
@@ -781,11 +824,28 @@ export default function SidePanel({
                                 onAltitudeRangeChange?.({ min: altitudeRange.min, max: newMax })
                               }
                             }}
-                            style={{ flex: 1, accentColor: '#3b82f6', cursor: 'pointer' }}
+                            style={{
+                              position: 'absolute',
+                              top: '0',
+                              left: '0',
+                              width: '100%',
+                              height: '100%',
+                              WebkitAppearance: 'none',
+                              appearance: 'none',
+                              background: 'transparent',
+                              pointerEvents: 'none',
+                              cursor: 'pointer',
+                              zIndex: 4
+                            }}
+                            className="dual-range-thumb"
                           />
                         </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#9ca3af' }}>
+                          <span>0 ft (GND)</span>
+                          <span>60,000 ft</span>
+                        </div>
                         <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '8px' }}>
-                          Only show airspaces within this altitude range
+                          Drag handles to filter airspaces by altitude
                         </p>
                       </div>
                     </div>

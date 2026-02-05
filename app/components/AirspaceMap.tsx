@@ -1337,24 +1337,26 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
           />
         )}
 
-        {/* Thermal Skyways Layer from thermal.kk7.ch (proxied) */}
+        {/* Thermal Skyways Layer from thermal.kk7.ch */}
         {layers.find(l => l.id === 'thermal-skyways')?.visible && (
           <TileLayer
             attribution='thermal.kk7.ch <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC-BY-NC-SA</a>'
-            url="/api/thermal-tile?type=skyways&z={z}&x={x}&y={y}"
+            url="https://thermal.kk7.ch/tiles/skyways_all_all/{z}/{x}/{y}.png"
             maxNativeZoom={13}
             maxZoom={19}
+            tms={true}
             opacity={layers.find(l => l.id === 'thermal-skyways')?.opacity ?? 0.7}
           />
         )}
 
-        {/* Thermal Hotspots Layer from thermal.kk7.ch (proxied) */}
+        {/* Thermal Hotspots Layer from thermal.kk7.ch */}
         {layers.find(l => l.id === 'thermal-hotspots')?.visible && (
           <TileLayer
             attribution='thermal.kk7.ch <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC-BY-NC-SA</a>'
-            url="/api/thermal-tile?type=hotspots&z={z}&x={x}&y={y}"
+            url="https://thermal.kk7.ch/tiles/thermals_jul_07/{z}/{x}/{y}.png"
             maxNativeZoom={12}
             maxZoom={19}
+            tms={true}
             opacity={layers.find(l => l.id === 'thermal-hotspots')?.opacity ?? 0.7}
           />
         )}
