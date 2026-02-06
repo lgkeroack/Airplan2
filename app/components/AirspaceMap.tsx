@@ -188,14 +188,74 @@ function MapClickHandler({
       west: bounds.getWest()
     })
 
+    // Touch event handlers for single-finger panning on mobile
+    const container = map.getContainer()
+
+    let touchStartPoint: { x: number; y: number } | null = null
+    let touchStartLatLng: L.LatLng | null = null
+    let isTouchDragging = false
+    let touchMoved = false
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        const touch = e.touches[0]
+        touchStartPoint = { x: touch.clientX, y: touch.clientY }
+        touchStartLatLng = map.containerPointToLatLng([touch.clientX - container.getBoundingClientRect().left, touch.clientY - container.getBoundingClientRect().top])
+        isTouchDragging = false
+        touchMoved = false
+      }
+    }
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 1 && touchStartPoint) {
+        const touch = e.touches[0]
+        const dx = touch.clientX - touchStartPoint.x
+        const dy = touch.clientY - touchStartPoint.y
+
+        // Only start dragging if moved more than 10 pixels
+        if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+          touchMoved = true
+          isTouchDragging = true
+          e.preventDefault() // Prevent page scroll
+
+          // Pan the map
+          map.panBy([-dx, -dy], { animate: false })
+          touchStartPoint = { x: touch.clientX, y: touch.clientY }
+        }
+      }
+    }
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      // If it was a tap (no significant movement), simulate a click
+      if (!touchMoved && touchStartLatLng && e.changedTouches.length === 1) {
+        // Small delay to ensure it's not a double-tap
+        setTimeout(() => {
+          if (touchStartLatLng) {
+            onMapClick(touchStartLatLng.lat, touchStartLatLng.lng, null as any)
+          }
+        }, 50)
+      }
+      touchStartPoint = null
+      touchStartLatLng = null
+      isTouchDragging = false
+      touchMoved = false
+    }
+
+    container.addEventListener('touchstart', handleTouchStart, { passive: true })
+    container.addEventListener('touchmove', handleTouchMove, { passive: false })
+    container.addEventListener('touchend', handleTouchEnd, { passive: true })
+
     return () => {
       mapRef.current = null
+      container.removeEventListener('touchstart', handleTouchStart)
+      container.removeEventListener('touchmove', handleTouchMove)
+      container.removeEventListener('touchend', handleTouchEnd)
       // Re-enable on cleanup
       if (map && isDrawingRoute) {
         map.doubleClickZoom.enable()
       }
     }
-  }, [map, mapRef, setMapBounds, isDrawingRoute])
+  }, [map, mapRef, setMapBounds, isDrawingRoute, onMapClick])
 
   // Track whether a drag occurred to prevent click events after dragging
   const isDraggingRef = useRef(false)
