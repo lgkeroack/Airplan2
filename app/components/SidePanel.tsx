@@ -1436,7 +1436,7 @@ export default function SidePanel({
                       }}>
                         Airplan lets you visualize airspace data in 3D, and makes complex airspaces simple. All credits go to{' '}
                         <a
-                          href="https://www.linkedin.com/in/louis-gabriel-k%C3%A9roack-930465b1/"
+                          href="https://gabs.ventures"
                           target="_blank"
                           rel="noopener noreferrer"
                           style={{ color: '#3b82f6', textDecoration: 'underline' }}
@@ -1535,7 +1535,7 @@ export default function SidePanel({
                       padding: '12px',
                       borderTop: '1px solid #e5e7eb'
                     }}>
-                      <div style={{ marginBottom: '4px' }}>Version 1.0.0</div>
+                      <div style={{ marginBottom: '4px' }}>Version 1.1.0</div>
                       <div>Built with Next.js & React-Leaflet</div>
                     </div>
                   </div>
