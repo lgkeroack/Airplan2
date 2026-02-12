@@ -1,12 +1,24 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 type Phase = 'ad' | 'hosting-message' | 'collapsed' | 'thank-you' | 'hidden'
 
 export default function BannerAd() {
   const [phase, setPhase] = useState<Phase>('ad')
   const [secondsLeft, setSecondsLeft] = useState(30)
+  const adPushed = useRef(false)
+
+  // Push the AdSense ad once the script is loaded
+  useEffect(() => {
+    if (adPushed.current) return
+    adPushed.current = true
+    try {
+      ((window as any).adsbygoogle = (window as any).adsbygoogle || []).push({})
+    } catch {
+      // AdSense script not yet loaded or ad blocked — banner still shows gracefully
+    }
+  }, [])
 
   useEffect(() => {
     if (phase === 'hidden') return
@@ -73,28 +85,19 @@ export default function BannerAd() {
     >
       {showAd && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '8px 16px' }}>
-          {/* Ad slot placeholder — replace inner div with your AdSense ins tag */}
-          <div
-            id="banner-ad-slot"
+          <ins
+            className="adsbygoogle"
             style={{
-              width: '100%',
-              maxWidth: 728,
+              display: 'inline-block',
+              width: 728,
               height: 90,
-              minHeight: 90,
-              background: 'linear-gradient(135deg, #1e3a5f 0%, #2d4a7a 100%)',
-              borderRadius: 6,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#64748b',
-              fontSize: 13,
-              letterSpacing: 0.5,
-              border: '1px dashed #475569',
+              maxWidth: '100%',
             }}
-          >
-            {/* Replace this div with your Google AdSense ad unit */}
-            Ad Banner · 728×90
-          </div>
+            data-ad-client="ca-pub-2383569184641114"
+            data-ad-slot=""
+            data-ad-format="horizontal"
+            data-full-width-responsive="true"
+          />
 
           <div
             style={{
