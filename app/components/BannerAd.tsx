@@ -75,29 +75,31 @@ export default function BannerAd() {
         position: 'relative',
         zIndex: 1100,
         width: '100%',
-        maxHeight: isCollapsed ? 0 : showThankYou ? 48 : 110,
+        height: isCollapsed ? 0 : showThankYou ? 48 : '10vh',
         overflow: 'hidden',
-        transition: 'max-height 0.4s ease-in-out',
+        transition: 'height 0.4s ease-in-out',
         backgroundColor: showThankYou ? '#065f46' : '#1e293b',
         borderBottom: isCollapsed ? 'none' : '1px solid #334155',
         flexShrink: 0,
       }}
     >
       {showAd && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '8px 16px' }}>
-          <ins
-            className="adsbygoogle"
-            style={{
-              display: 'inline-block',
-              width: 728,
-              height: 90,
-              maxWidth: '100%',
-            }}
-            data-ad-client="ca-pub-2383569184641114"
-            data-ad-slot="2996128451"
-            data-ad-format="auto"
-            data-full-width-responsive="true"
-          />
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', padding: '4px 16px', boxSizing: 'border-box' }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', minHeight: 0 }}>
+            <ins
+              className="adsbygoogle"
+              style={{
+                display: 'block',
+                width: 728,
+                maxWidth: '100%',
+                height: '100%',
+              }}
+              data-ad-client="ca-pub-2383569184641114"
+              data-ad-slot="2996128451"
+              data-ad-format="auto"
+              data-full-width-responsive="true"
+            />
+          </div>
 
           <div
             style={{
@@ -105,7 +107,8 @@ export default function BannerAd() {
               alignItems: 'center',
               justifyContent: 'center',
               gap: 12,
-              marginTop: 4,
+              flexShrink: 0,
+              height: 22,
               width: '100%',
             }}
           >
