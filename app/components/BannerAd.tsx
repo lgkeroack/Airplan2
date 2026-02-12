@@ -176,8 +176,8 @@ export default function BannerAd() {
                   display: 'block',
                   width: 728,
                   maxWidth: '100%',
-                  height: 33,
-                  maxHeight: 33,
+                  height: 'calc(var(--banner-h) - 3px)',
+                  maxHeight: 'calc(var(--banner-h) - 3px)',
                 }}
                 data-ad-client="ca-pub-2383569184641114"
                 data-ad-slot="2996128451"
@@ -226,10 +226,18 @@ export default function BannerAd() {
       </div>
 
       <style>{`
+        :root {
+          --banner-h: 36px;
+        }
+        @media (max-width: 768px) {
+          :root {
+            --banner-h: 50px;
+          }
+        }
         .banner-ad-open {
-          height: 36px !important;
-          min-height: 36px !important;
-          max-height: 36px !important;
+          height: var(--banner-h) !important;
+          min-height: var(--banner-h) !important;
+          max-height: var(--banner-h) !important;
           transition: height 0.4s ease-in-out, min-height 0.4s ease-in-out, max-height 0.4s ease-in-out;
         }
         .banner-ad-collapsed {
