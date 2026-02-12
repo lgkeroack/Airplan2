@@ -94,8 +94,8 @@ export default function BannerAd() {
               maxWidth: '100%',
             }}
             data-ad-client="ca-pub-2383569184641114"
-            data-ad-slot=""
-            data-ad-format="horizontal"
+            data-ad-slot="2996128451"
+            data-ad-format="auto"
             data-full-width-responsive="true"
           />
 
