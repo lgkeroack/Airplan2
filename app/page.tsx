@@ -89,7 +89,7 @@ export default function Home() {
       <main style={{ position: 'relative', height: '100vh', width: '100vw', overflow: 'hidden', backgroundColor: '#111827', display: 'flex', flexDirection: 'column' }}>
         <BannerAd />
         <Walkthrough />
-        <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+        <div style={{ flex: 1, position: 'relative', minHeight: 0, height: 0 }}>
           <ErrorBoundary>
             <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#fff' }}>Loading map...</div>}>
               <MapWithData />

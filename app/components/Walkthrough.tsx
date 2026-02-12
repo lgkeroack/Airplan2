@@ -7,7 +7,6 @@ const STORAGE_KEY = 'airplan-walkthrough-seen'
 interface Step {
   title: string
   body: string
-  icon: string
   spotlight?: 'map' | 'sidepanel'
 }
 
@@ -15,24 +14,16 @@ const steps: Step[] = [
   {
     title: 'Welcome to Airplan',
     body: 'Airplan helps pilots visualize airspace on topographic maps. Let\u2019s take a quick look at how it works.',
-    icon: '\u2708\uFE0F',
   },
   {
     title: 'Click anywhere on the map',
     body: 'Tap or click any point on the map to open a context menu. Choose "Retrieve Airspace Here" to see what airspace exists above that location.',
-    icon: '\uD83D\uDCCD',
     spotlight: 'map',
   },
   {
     title: 'Explore the Air Column',
     body: 'The side panel will open showing the vertical air column\u2014each colored bar represents an airspace layer from floor to ceiling. You can click any bar to highlight it on the map.',
-    icon: '\uD83D\uDDFC',
     spotlight: 'sidepanel',
-  },
-  {
-    title: 'You\u2019re all set!',
-    body: 'Use the Layers tab to switch basemaps and filter airspace classes, or the Search tab to jump to any location. Happy flying!',
-    icon: '\uD83D\uDE80',
   },
 ]
 
@@ -131,17 +122,6 @@ export default function Walkthrough() {
           animation: 'walkthroughFadeIn 0.3s ease-out',
         }}
       >
-        {/* Step icon */}
-        <div
-          style={{
-            fontSize: 36,
-            textAlign: 'center',
-            marginBottom: 12,
-          }}
-        >
-          {step.icon}
-        </div>
-
         {/* Title */}
         <h2
           style={{
