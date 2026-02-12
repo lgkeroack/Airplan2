@@ -1,6 +1,5 @@
 import type { Metadata } from 'next'
 import React from 'react'
-import Script from 'next/script'
 import { Analytics } from '@vercel/analytics/next'
 import './globals.css'
 
@@ -19,14 +18,15 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body style={{ margin: 0, padding: 0, minHeight: '100vh' }}>
-        {children}
-        <Script
+      <head>
+        <script
           async
           src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2383569184641114"
           crossOrigin="anonymous"
-          strategy="afterInteractive"
         />
+      </head>
+      <body style={{ margin: 0, padding: 0, minHeight: '100vh' }}>
+        {children}
         <Analytics />
       </body>
     </html>

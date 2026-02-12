@@ -86,17 +86,15 @@ export default function Home() {
   return (
     <ClientErrorCatcher>
       <PageDebugger />
-      <main style={{ position: 'relative', height: '100vh', width: '100vw', overflow: 'hidden', backgroundColor: '#111827', display: 'flex', flexDirection: 'column' }}>
+      <main style={{ position: 'relative', height: '100vh', width: '100vw', overflow: 'hidden', backgroundColor: '#111827' }}>
         <BannerAd />
         <Walkthrough />
-        <div style={{ flex: 1, position: 'relative', minHeight: 0, height: 0 }}>
-          <ErrorBoundary>
-            <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#fff' }}>Loading map...</div>}>
-              <MapWithData />
-            </Suspense>
-          </ErrorBoundary>
-          <ConsoleLogger />
-        </div>
+        <ErrorBoundary>
+          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#fff' }}>Loading map...</div>}>
+            <MapWithData />
+          </Suspense>
+        </ErrorBoundary>
+        <ConsoleLogger />
       </main>
     </ClientErrorCatcher>
   )

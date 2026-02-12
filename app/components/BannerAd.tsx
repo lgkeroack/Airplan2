@@ -72,7 +72,9 @@ export default function BannerAd() {
   return (
     <div
       style={{
-        position: 'relative',
+        position: 'fixed',
+        top: 0,
+        left: 0,
         zIndex: 1100,
         width: '100%',
         height: isCollapsed ? 0 : showThankYou ? 48 : '10vh',
@@ -80,7 +82,6 @@ export default function BannerAd() {
         transition: 'height 0.4s ease-in-out',
         backgroundColor: showThankYou ? '#065f46' : '#1e293b',
         borderBottom: isCollapsed ? 'none' : '1px solid #334155',
-        flexShrink: 0,
       }}
     >
       {showAd && (
