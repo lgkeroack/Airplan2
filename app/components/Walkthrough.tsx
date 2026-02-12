@@ -13,7 +13,7 @@ interface Step {
 const steps: Step[] = [
   {
     title: 'Welcome to Airplan',
-    body: 'Airplan helps pilots visualize airspace on topographic maps. Let\u2019s take a quick look at how it works.',
+    body: '',
   },
   {
     title: 'Click anywhere on the map',
@@ -84,7 +84,7 @@ export default function Walkthrough() {
             position: 'absolute',
             top: '10%',
             right: 0,
-            width: 464,
+            width: 64,
             height: '80%',
             borderRadius: '16px 0 0 16px',
             boxShadow: '0 0 0 9999px rgba(0,0,0,0.6)',
@@ -136,17 +136,19 @@ export default function Walkthrough() {
         </h2>
 
         {/* Body */}
-        <p
-          style={{
-            color: '#94a3b8',
-            fontSize: 14,
-            lineHeight: 1.6,
-            textAlign: 'center',
-            margin: '0 0 24px',
-          }}
-        >
-          {step.body}
-        </p>
+        {step.body && (
+          <p
+            style={{
+              color: '#94a3b8',
+              fontSize: 14,
+              lineHeight: 1.6,
+              textAlign: 'center',
+              margin: '0 0 24px',
+            }}
+          >
+            {step.body}
+          </p>
+        )}
 
         {/* Progress dots */}
         <div
