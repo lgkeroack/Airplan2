@@ -77,7 +77,7 @@ export default function BannerAd() {
         left: 0,
         zIndex: 1100,
         width: '100%',
-        height: isCollapsed ? 0 : showThankYou ? 48 : '10vh',
+        height: isCollapsed ? 0 : showThankYou ? 48 : 116,
         overflow: 'hidden',
         transition: 'height 0.4s ease-in-out',
         backgroundColor: showThankYou ? '#065f46' : '#1e293b',
@@ -86,14 +86,14 @@ export default function BannerAd() {
     >
       {showAd && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', padding: '4px 16px', boxSizing: 'border-box' }}>
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', minHeight: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
             <ins
               className="adsbygoogle"
               style={{
                 display: 'block',
                 width: 728,
                 maxWidth: '100%',
-                height: '100%',
+                height: 90,
               }}
               data-ad-client="ca-pub-2383569184641114"
               data-ad-slot="2996128451"
@@ -124,7 +124,7 @@ export default function BannerAd() {
                 Ads like this one help cover hosting and rendering costs
               </span>
             ) : (
-              <span style={{ color: '#475569', fontSize: 11 }}>
+              <span style={{ color: '#94a3b8', fontSize: 11 }}>
                 Ad · closes in {secondsLeft}s
               </span>
             )}
