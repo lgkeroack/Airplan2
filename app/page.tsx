@@ -5,6 +5,7 @@ import ClientErrorCatcher from './components/ClientErrorCatcher'
 import ConsoleLogger from './components/ConsoleLogger'
 import PageDebugger from './components/PageDebugger'
 import AirspaceMapLoader from './components/AirspaceMapLoader'
+import BannerAd from './components/BannerAd'
 import { serverLogger } from '@/lib/server-logger'
 
 async function AirspaceDataLoader() {
@@ -84,13 +85,16 @@ export default function Home() {
   return (
     <ClientErrorCatcher>
       <PageDebugger />
-      <main style={{ position: 'relative', height: '100vh', width: '100vw', overflow: 'hidden', backgroundColor: '#111827' }}>
-        <ErrorBoundary>
-          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#fff' }}>Loading map...</div>}>
-            <MapWithData />
-          </Suspense>
-        </ErrorBoundary>
-        <ConsoleLogger />
+      <main style={{ position: 'relative', height: '100vh', width: '100vw', overflow: 'hidden', backgroundColor: '#111827', display: 'flex', flexDirection: 'column' }}>
+        <BannerAd />
+        <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+          <ErrorBoundary>
+            <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#fff' }}>Loading map...</div>}>
+              <MapWithData />
+            </Suspense>
+          </ErrorBoundary>
+          <ConsoleLogger />
+        </div>
       </main>
     </ClientErrorCatcher>
   )
