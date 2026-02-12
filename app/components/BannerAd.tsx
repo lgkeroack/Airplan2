@@ -73,16 +73,14 @@ export default function BannerAd() {
 
   return (
     <div
+      className={isCollapsed ? 'banner-ad-collapsed' : 'banner-ad-open'}
       style={{
         position: 'fixed',
         top: 0,
         left: 0,
         zIndex: 1100,
         width: '100%',
-        height: isCollapsed ? 0 : '5vh',
-        minHeight: isCollapsed ? 0 : 36,
         overflow: 'hidden',
-        transition: 'height 0.4s ease-in-out, min-height 0.4s ease-in-out',
         backgroundColor: '#1e293b',
         display: 'flex',
         flexDirection: 'column',
@@ -178,7 +176,8 @@ export default function BannerAd() {
                   display: 'block',
                   width: 728,
                   maxWidth: '100%',
-                  height: '100%',
+                  height: 'calc(5vh - 3px)',
+                  maxHeight: 'calc(5vh - 3px)',
                 }}
                 data-ad-client="ca-pub-2383569184641114"
                 data-ad-slot="2996128451"
@@ -227,6 +226,18 @@ export default function BannerAd() {
       </div>
 
       <style>{`
+        .banner-ad-open {
+          height: 5vh !important;
+          min-height: 36px !important;
+          max-height: 5vh !important;
+          transition: height 0.4s ease-in-out, min-height 0.4s ease-in-out, max-height 0.4s ease-in-out;
+        }
+        .banner-ad-collapsed {
+          height: 0px !important;
+          min-height: 0px !important;
+          max-height: 0px !important;
+          transition: height 0.4s ease-in-out, min-height 0.4s ease-in-out, max-height 0.4s ease-in-out;
+        }
         @keyframes bannerFadeIn {
           from { opacity: 0; }
           to { opacity: 1; }
