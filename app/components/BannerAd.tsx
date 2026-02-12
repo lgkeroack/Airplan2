@@ -72,185 +72,198 @@ export default function BannerAd() {
   const progress = Math.min(elapsed / TOTAL_DURATION, 1)
 
   return (
-    <div
-      className={isCollapsed ? 'banner-ad-collapsed' : 'banner-ad-open'}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        zIndex: 1100,
-        width: '100%',
-        overflow: 'hidden',
-        backgroundColor: '#1e293b',
-        display: 'flex',
-        flexDirection: 'column',
-      }}
-    >
-      {/* Content area */}
+    <>
+      <style>{`
+        :root { --banner-h: 36px; }
+        @media (max-width: 768px) { :root { --banner-h: 50px; } }
+        @keyframes bannerFadeIn { from { opacity: 0; } to { opacity: 1; } }
+      `}</style>
+
+      {/* Outer shell: fixed dimensions, never changes, clips everything */}
       <div
         style={{
-          flex: 1,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          position: 'relative',
-          minHeight: 0,
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          zIndex: 1100,
+          width: '100%',
+          height: isCollapsed ? 0 : 'var(--banner-h)',
+          overflow: 'hidden',
+          transition: 'height 0.4s ease-in-out',
+          pointerEvents: isCollapsed ? 'none' : 'auto',
         }}
       >
-        {/* Dismiss button */}
-        <button
-          onClick={handleDismiss}
-          aria-label="Dismiss ad"
+        {/* Inner box: always full banner height, absolutely positioned so
+            nothing inside (including AdSense) can push the outer shell */}
+        <div
           style={{
             position: 'absolute',
-            top: 4,
-            right: 8,
-            background: 'none',
-            border: 'none',
-            color: '#64748b',
-            cursor: 'pointer',
-            fontSize: 14,
-            lineHeight: 1,
-            padding: '4px 6px',
-            borderRadius: 4,
-            zIndex: 1,
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: 'var(--banner-h)',
+            backgroundColor: '#1e293b',
+            display: 'flex',
+            flexDirection: 'column',
           }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = '#94a3b8')}
-          onMouseLeave={(e) => (e.currentTarget.style.color = '#64748b')}
         >
-          ✕
-        </button>
-
-        {/* Phase 1: Hosting message */}
-        {phase === 'message' && (
-          <span
+          {/* Content area — relative container for absolutely positioned phases */}
+          <div
             style={{
-              color: '#94a3b8',
-              fontSize: 'clamp(12px, 1.5vh, 16px)',
-              textAlign: 'center',
-              padding: '0 40px',
-              animation: 'bannerFadeIn 0.4s ease-out',
+              flex: 1,
+              position: 'relative',
+              overflow: 'hidden',
+              minHeight: 0,
             }}
           >
-            These ads help cover server and render costs
-          </span>
-        )}
-
-        {/* Phase 2: Ad (or fallback if blocked/empty) */}
-        {phase === 'ad' && (
-          adFailed ? (
-            <span
+            {/* Dismiss button */}
+            <button
+              onClick={handleDismiss}
+              aria-label="Dismiss ad"
               style={{
-                color: '#94a3b8',
-                fontSize: 'clamp(12px, 1.5vh, 16px)',
-                textAlign: 'center',
-                padding: '0 40px',
-                animation: 'bannerFadeIn 0.4s ease-out',
+                position: 'absolute',
+                top: 4,
+                right: 8,
+                background: 'none',
+                border: 'none',
+                color: '#64748b',
+                cursor: 'pointer',
+                fontSize: 14,
+                lineHeight: 1,
+                padding: '4px 6px',
+                borderRadius: 4,
+                zIndex: 2,
               }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = '#94a3b8')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = '#64748b')}
             >
-              No ads for now, so enjoy{' '}
-              <a
-                href="https://theuselessweb.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: '#3b82f6', textDecoration: 'underline' }}
-              >
-                this
-              </a>
-            </span>
-          ) : (
+              ✕
+            </button>
+
+            {/* Phase 1: Hosting message */}
             <div
               style={{
+                position: 'absolute',
+                inset: 0,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                width: '100%',
-                height: '100%',
-                animation: 'bannerFadeIn 0.4s ease-out',
+                opacity: phase === 'message' ? 1 : 0,
+                pointerEvents: phase === 'message' ? 'auto' : 'none',
+                transition: 'opacity 0.3s ease',
               }}
             >
-              <ins
-                ref={adInsRef}
-                className="adsbygoogle"
+              <span
                 style={{
-                  display: 'block',
-                  width: 728,
-                  maxWidth: '100%',
-                  height: 'calc(var(--banner-h) - 3px)',
-                  maxHeight: 'calc(var(--banner-h) - 3px)',
+                  color: '#94a3b8',
+                  fontSize: 'clamp(12px, 1.5vh, 16px)',
+                  textAlign: 'center',
+                  padding: '0 40px',
                 }}
-                data-ad-client="ca-pub-2383569184641114"
-                data-ad-slot="2996128451"
-                data-ad-format="auto"
-                data-full-width-responsive="true"
-              />
+              >
+                These ads help cover server and render costs
+              </span>
             </div>
-          )
-        )}
 
-        {/* Phase 3: Thank you */}
-        {phase === 'thanks' && (
-          <span
+            {/* Phase 2: Ad (or fallback if blocked/empty) */}
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflow: 'hidden',
+                opacity: phase === 'ad' ? 1 : 0,
+                pointerEvents: phase === 'ad' ? 'auto' : 'none',
+                transition: 'opacity 0.3s ease',
+              }}
+            >
+              {adFailed ? (
+                <span
+                  style={{
+                    color: '#94a3b8',
+                    fontSize: 'clamp(12px, 1.5vh, 16px)',
+                    textAlign: 'center',
+                    padding: '0 40px',
+                  }}
+                >
+                  No ads for now, so enjoy{' '}
+                  <a
+                    href="https://theuselessweb.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: '#3b82f6', textDecoration: 'underline' }}
+                  >
+                    this
+                  </a>
+                </span>
+              ) : (
+                <ins
+                  ref={adInsRef}
+                  className="adsbygoogle"
+                  style={{
+                    display: 'block',
+                    width: 728,
+                    maxWidth: '100%',
+                    height: '100%',
+                  }}
+                  data-ad-client="ca-pub-2383569184641114"
+                  data-ad-slot="2996128451"
+                  data-ad-format="horizontal"
+                  data-full-width-responsive="false"
+                />
+              )}
+            </div>
+
+            {/* Phase 3: Thank you */}
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                opacity: phase === 'thanks' ? 1 : 0,
+                pointerEvents: phase === 'thanks' ? 'auto' : 'none',
+                transition: 'opacity 0.3s ease',
+              }}
+            >
+              <span
+                style={{
+                  color: '#a7f3d0',
+                  fontSize: 'clamp(13px, 1.5vh, 16px)',
+                  fontWeight: 500,
+                  letterSpacing: 0.3,
+                  textAlign: 'center',
+                  padding: '0 40px',
+                }}
+              >
+                Thank you and happy flying!
+              </span>
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div
             style={{
-              color: '#a7f3d0',
-              fontSize: 'clamp(13px, 1.5vh, 16px)',
-              fontWeight: 500,
-              letterSpacing: 0.3,
-              textAlign: 'center',
-              padding: '0 40px',
-              animation: 'bannerFadeIn 0.4s ease-out',
+              height: 3,
+              width: '100%',
+              backgroundColor: '#334155',
+              flexShrink: 0,
             }}
           >
-            Thank you and happy flying!
-          </span>
-        )}
+            <div
+              style={{
+                height: '100%',
+                width: `${progress * 100}%`,
+                backgroundColor: phase === 'thanks' ? '#34d399' : '#3b82f6',
+                transition: 'background-color 0.4s ease',
+              }}
+            />
+          </div>
+        </div>
       </div>
-
-      {/* Progress bar */}
-      <div
-        style={{
-          height: 3,
-          width: '100%',
-          backgroundColor: '#334155',
-          flexShrink: 0,
-        }}
-      >
-        <div
-          style={{
-            height: '100%',
-            width: `${progress * 100}%`,
-            backgroundColor: phase === 'thanks' ? '#34d399' : '#3b82f6',
-            transition: 'background-color 0.4s ease',
-          }}
-        />
-      </div>
-
-      <style>{`
-        :root {
-          --banner-h: 36px;
-        }
-        @media (max-width: 768px) {
-          :root {
-            --banner-h: 50px;
-          }
-        }
-        .banner-ad-open {
-          height: var(--banner-h) !important;
-          min-height: var(--banner-h) !important;
-          max-height: var(--banner-h) !important;
-          transition: height 0.4s ease-in-out, min-height 0.4s ease-in-out, max-height 0.4s ease-in-out;
-        }
-        .banner-ad-collapsed {
-          height: 0px !important;
-          min-height: 0px !important;
-          max-height: 0px !important;
-          transition: height 0.4s ease-in-out, min-height 0.4s ease-in-out, max-height 0.4s ease-in-out;
-        }
-        @keyframes bannerFadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-      `}</style>
-    </div>
+    </>
   )
 }
