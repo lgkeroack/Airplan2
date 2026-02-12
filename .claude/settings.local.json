@@ -9,7 +9,8 @@
       "Bash(cmd /c \"taskkill /F /PID 65584 & taskkill /F /PID 58408 & taskkill /F /PID 40440 & taskkill /F /PID 28420 & taskkill /F /PID 31120 & taskkill /F /PID 8196 & taskkill /F /PID 46216 & taskkill /F /PID 70908 & taskkill /F /PID 61124 & taskkill /F /PID 34512 & taskkill /F /PID 67944 & taskkill /F /PID 57268 & taskkill /F /PID 47648 & taskkill /F /PID 64988 & taskkill /F /PID 23452 & taskkill /F /PID 61228 & taskkill /F /PID 29748 & taskkill /F /PID 49248 & taskkill /F /PID 42104 & taskkill /F /PID 33784 & taskkill /F /PID 69096 & taskkill /F /PID 67956 & taskkill /F /PID 57168 & taskkill /F /PID 41296 & taskkill /F /PID 71720 & taskkill /F /PID 58032 & taskkill /F /PID 69884 & taskkill /F /PID 42832 & taskkill /F /PID 45208 & taskkill /F /PID 20808 & taskkill /F /PID 21388\")",
       "Bash(cmd /c \"taskkill /F /PID 21388 & taskkill /F /PID 41296\")",
       "Bash(cmd /c \"taskkill /F /T /PID 21388 & taskkill /F /T /PID 41296\")",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(npx --no-install next build:*)"
     ]
   }
 }

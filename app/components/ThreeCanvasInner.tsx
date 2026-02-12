@@ -402,7 +402,7 @@ function DistanceMarkers({ totalDistanceKm = 0 }: { totalDistanceKm: number }) {
         lineWidth={1}
       />
       
-      {/* Markers (tick marks only, no labels) */}
+      {/* Markers with labels */}
       {markers.map((marker, i) => (
         <group key={i}>
           {/* Tick mark */}
@@ -411,6 +411,17 @@ function DistanceMarkers({ totalDistanceKm = 0 }: { totalDistanceKm: number }) {
             color="#6b7280"
             lineWidth={1}
           />
+          {/* Distance label */}
+          <Billboard position={[marker.x, -0.15, 0]}>
+            <Text
+              fontSize={0.15}
+              color="#4b5563"
+              anchorX="center"
+              anchorY="top"
+            >
+              {marker.label} km
+            </Text>
+          </Billboard>
         </group>
       ))}
     </group>
@@ -473,23 +484,23 @@ function VerticalScaleBar({ maxAltM, maxElev }: { maxAltM: number; maxElev: numb
   const airspaceTopY = (maxAltM / maxPositiveElev) * maxHeight
   
   // Create scale marks in meters
-  const scaleMarks: { y: number; isTerrain: boolean }[] = []
-  
+  const scaleMarks: { y: number; isTerrain: boolean; altitudeM: number }[] = []
+
   // Ground level
-  scaleMarks.push({ y: 0, isTerrain: true })
-  
+  scaleMarks.push({ y: 0, isTerrain: true, altitudeM: 0 })
+
   // Terrain top
   if (maxElev > 0) {
-    scaleMarks.push({ y: terrainTopY, isTerrain: true })
+    scaleMarks.push({ y: terrainTopY, isTerrain: true, altitudeM: Math.round(maxElev) })
   }
-  
+
   // Add altitude marks for airspace (500m intervals up to max)
   const intervals = [500, 1000, 1500, 2000, 3000, 4000, 5000, 6000]
   for (const alt of intervals) {
     if (alt <= maxAltM && alt > maxElev) {
       const y = (alt / maxPositiveElev) * maxHeight
       if (y <= airspaceTopY + 0.1) {
-        scaleMarks.push({ y, isTerrain: false })
+        scaleMarks.push({ y, isTerrain: false, altitudeM: alt })
       }
     }
   }
@@ -503,7 +514,7 @@ function VerticalScaleBar({ maxAltM, maxElev }: { maxAltM: number; maxElev: numb
         lineWidth={1}
       />
       
-      {/* Scale marks (tick marks only, no labels) */}
+      {/* Scale marks with labels */}
       {scaleMarks.map((mark, i) => (
         <group key={i} position={[0, mark.y, 0]}>
           {/* Tick mark */}
@@ -512,6 +523,17 @@ function VerticalScaleBar({ maxAltM, maxElev }: { maxAltM: number; maxElev: numb
             color={mark.isTerrain ? '#22c55e' : '#6b7280'}
             lineWidth={1}
           />
+          {/* Altitude label */}
+          <Billboard position={[-0.15, 0, 0]}>
+            <Text
+              fontSize={0.13}
+              color={mark.isTerrain ? '#16a34a' : '#4b5563'}
+              anchorX="right"
+              anchorY="middle"
+            >
+              {mark.altitudeM >= 1000 ? `${(mark.altitudeM / 1000).toFixed(1)}k` : `${mark.altitudeM}`} m
+            </Text>
+          </Billboard>
         </group>
       ))}
     </group>
