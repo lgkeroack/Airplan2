@@ -11,18 +11,30 @@ type Phase = 'message' | 'ad' | 'thanks' | 'collapsed' | 'hidden'
 export default function BannerAd() {
   const [phase, setPhase] = useState<Phase>('message')
   const [elapsed, setElapsed] = useState(0)
+  const [adFailed, setAdFailed] = useState(false)
   const adPushed = useRef(false)
+  const adInsRef = useRef<HTMLModElement>(null)
   const startTime = useRef(Date.now())
 
-  // Push the AdSense ad once during ad phase
+  // Push the AdSense ad once during ad phase, then check if it loaded
   useEffect(() => {
     if (phase !== 'ad' || adPushed.current) return
     adPushed.current = true
     try {
       ((window as any).adsbygoogle = (window as any).adsbygoogle || []).push({})
     } catch {
-      // AdSense not loaded or blocked
+      setAdFailed(true)
+      return
     }
+
+    // Check after 2s if the ad actually rendered
+    const check = setTimeout(() => {
+      const el = adInsRef.current
+      if (!el || el.childElementCount === 0 || el.getAttribute('data-ad-status') === 'unfilled') {
+        setAdFailed(true)
+      }
+    }, 2000)
+    return () => clearTimeout(check)
   }, [phase])
 
   // Single timer driving everything
@@ -126,32 +138,55 @@ export default function BannerAd() {
           </span>
         )}
 
-        {/* Phase 2: Ad */}
+        {/* Phase 2: Ad (or fallback if blocked/empty) */}
         {phase === 'ad' && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '100%',
-              height: '100%',
-              animation: 'bannerFadeIn 0.4s ease-out',
-            }}
-          >
-            <ins
-              className="adsbygoogle"
+          adFailed ? (
+            <span
               style={{
-                display: 'block',
-                width: 728,
-                maxWidth: '100%',
-                height: '100%',
+                color: '#94a3b8',
+                fontSize: 'clamp(12px, 1.5vh, 16px)',
+                textAlign: 'center',
+                padding: '0 40px',
+                animation: 'bannerFadeIn 0.4s ease-out',
               }}
-              data-ad-client="ca-pub-2383569184641114"
-              data-ad-slot="2996128451"
-              data-ad-format="auto"
-              data-full-width-responsive="true"
-            />
-          </div>
+            >
+              No ads for now, so enjoy{' '}
+              <a
+                href="https://theuselessweb.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#3b82f6', textDecoration: 'underline' }}
+              >
+                this
+              </a>
+            </span>
+          ) : (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '100%',
+                height: '100%',
+                animation: 'bannerFadeIn 0.4s ease-out',
+              }}
+            >
+              <ins
+                ref={adInsRef}
+                className="adsbygoogle"
+                style={{
+                  display: 'block',
+                  width: 728,
+                  maxWidth: '100%',
+                  height: '100%',
+                }}
+                data-ad-client="ca-pub-2383569184641114"
+                data-ad-slot="2996128451"
+                data-ad-format="auto"
+                data-full-width-responsive="true"
+              />
+            </div>
+          )
         )}
 
         {/* Phase 3: Thank you */}
