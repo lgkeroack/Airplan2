@@ -526,7 +526,7 @@ export default function AirspaceRoute({
         const fetchElevationGrid = async () => {
             setIsLoading(true)
             
-            const cellSizeKm = 0.5
+            const cellSizeKm = 0.25
             const corridorPolygon = routeCorridor.map(v => ({
                 latitude: v.lat,
                 longitude: v.lon
@@ -559,7 +559,7 @@ export default function AirspaceRoute({
             }
             
             // Limit to prevent API overload
-            const maxCells = 200
+            const maxCells = 400
             const sampledCells = cellRequests.length > maxCells 
                 ? cellRequests.filter((_, i) => i % Math.ceil(cellRequests.length / maxCells) === 0)
                 : cellRequests
