@@ -525,8 +525,23 @@ export default function AirspaceRoute({
         
         const fetchElevationGrid = async () => {
             setIsLoading(true)
-            
-            const cellSizeKm = 0.25
+
+            // Progressive degradation: adjust cell size based on route length
+            // Short routes (<50km): fine sampling (0.25km)
+            // Medium routes (50-100km): medium sampling (0.5km)
+            // Long routes (>100km): coarse sampling to prevent timeouts
+            let cellSizeKm: number
+            if (routeLength < 50) {
+                cellSizeKm = 0.25  // High detail for short routes
+            } else if (routeLength < 100) {
+                cellSizeKm = 0.5   // Medium detail for medium routes
+            } else if (routeLength < 200) {
+                cellSizeKm = 1.0   // Coarser sampling for long routes
+            } else {
+                // For very long routes, scale sampling to keep ~200 length samples
+                cellSizeKm = Math.max(1.0, routeLength / 200)
+            }
+
             const corridorPolygon = routeCorridor.map(v => ({
                 latitude: v.lat,
                 longitude: v.lon
@@ -559,8 +574,17 @@ export default function AirspaceRoute({
             }
             
             // Limit to prevent API overload
-            const maxCells = 400
-            const sampledCells = cellRequests.length > maxCells 
+            // Scale max cells based on route length to avoid rate limiting
+            let maxCells: number
+            if (routeLength < 50) {
+                maxCells = 400   // Allow more detail for short routes
+            } else if (routeLength < 100) {
+                maxCells = 300   // Moderate limit for medium routes
+            } else {
+                maxCells = 200   // Conservative limit for long routes
+            }
+
+            const sampledCells = cellRequests.length > maxCells
                 ? cellRequests.filter((_, i) => i % Math.ceil(cellRequests.length / maxCells) === 0)
                 : cellRequests
             
