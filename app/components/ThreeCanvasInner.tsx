@@ -537,6 +537,7 @@ export interface ThreeCanvasProps {
   routeBearing?: number // Radians, 0 = north, positive = clockwise
   totalDistanceKm?: number
   isFullscreen?: boolean
+  showFps?: boolean
 }
 
 // Get color for airspace type
@@ -763,7 +764,7 @@ function AirspaceVolumes({ airspaces, maxElev }: { airspaces: PositionedAirspace
   )
 }
 
-export default function ThreeCanvasInner({ cells, minElev, maxElev, width, airspaces = [], routeBearing = 0, totalDistanceKm = 0, isFullscreen = false }: ThreeCanvasProps) {
+export default function ThreeCanvasInner({ cells, minElev, maxElev, width, airspaces = [], routeBearing = 0, totalDistanceKm = 0, isFullscreen = false, showFps = false }: ThreeCanvasProps) {
   const xExtent = 6.0
   
   // Calculate max altitude in meters for scale bar
