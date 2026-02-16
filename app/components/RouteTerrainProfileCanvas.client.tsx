@@ -475,15 +475,16 @@ export default function RouteTerrainProfileCanvas({ cells, minElev, maxElev, wid
               console.error('Component stack:', errorInfo.componentStack)
             }}
           >
-            <ThreeCanvas 
-              cells={cells} 
-              minElev={minElev} 
-              maxElev={maxElev} 
-              width={width} 
+            <ThreeCanvas
+              cells={cells}
+              minElev={minElev}
+              maxElev={maxElev}
+              width={width}
               airspaces={airspaces}
               routeBearing={routeBearing}
               totalDistanceKm={totalDistanceKm}
               isFullscreen={true}
+              showFps={process.env.NODE_ENV === 'development'}
             />
           </ThreeErrorBoundary>
         </div>
@@ -500,14 +501,15 @@ export default function RouteTerrainProfileCanvas({ cells, minElev, maxElev, wid
           console.error('Component stack:', errorInfo.componentStack)
         }}
       >
-        <ThreeCanvas 
-          cells={cells} 
-          minElev={minElev} 
-          maxElev={maxElev} 
-          width={width} 
+        <ThreeCanvas
+          cells={cells}
+          minElev={minElev}
+          maxElev={maxElev}
+          width={width}
           airspaces={airspaces}
           routeBearing={routeBearing}
           totalDistanceKm={totalDistanceKm}
+          showFps={process.env.NODE_ENV === 'development'}
         />
       </ThreeErrorBoundary>
     </div>

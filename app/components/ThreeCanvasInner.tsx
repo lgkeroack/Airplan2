@@ -1,8 +1,8 @@
 "use client"
 
-import { useMemo } from 'react'
-import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Text, Billboard, Line } from '@react-three/drei'
+import { useMemo, useRef, useState, useEffect } from 'react'
+import { Canvas, useFrame } from '@react-three/fiber'
+import { OrbitControls, Text, Billboard, Line, Html } from '@react-three/drei'
 import * as THREE from 'three'
 import type { AirspaceData } from '@/lib/types'
 
@@ -18,6 +18,56 @@ interface ElevationGridCell {
 interface PositionedAirspace extends AirspaceData {
   startProgress: number // 0-1, where along route this airspace starts
   endProgress: number   // 0-1, where along route this airspace ends
+}
+
+// FPS Monitor component for performance verification
+// Displays in development mode only to help verify 30fps target
+function FpsMonitor({ showFps = false }: { showFps?: boolean }) {
+  const [fps, setFps] = useState(60)
+  const frameTimesRef = useRef<number[]>([])
+  const lastTimeRef = useRef(performance.now())
+
+  useFrame(() => {
+    if (!showFps) return
+
+    const now = performance.now()
+    const delta = now - lastTimeRef.current
+    lastTimeRef.current = now
+
+    // Keep last 30 frame times for averaging
+    frameTimesRef.current.push(delta)
+    if (frameTimesRef.current.length > 30) {
+      frameTimesRef.current.shift()
+    }
+
+    // Calculate average FPS every 10 frames
+    if (frameTimesRef.current.length >= 10 && frameTimesRef.current.length % 10 === 0) {
+      const avgDelta = frameTimesRef.current.reduce((a, b) => a + b, 0) / frameTimesRef.current.length
+      setFps(Math.round(1000 / avgDelta))
+    }
+  })
+
+  if (!showFps) return null
+
+  // Display FPS counter in 3D space using Html overlay
+  const fpsColor = fps >= 30 ? '#22c55e' : fps >= 20 ? '#eab308' : '#ef4444'
+
+  return (
+    <Html position={[-2.5, 2, 0]} style={{ pointerEvents: 'none' }}>
+      <div style={{
+        background: 'rgba(0,0,0,0.6)',
+        color: fpsColor,
+        padding: '4px 8px',
+        borderRadius: '4px',
+        fontSize: '12px',
+        fontFamily: 'monospace',
+        fontWeight: 'bold',
+        whiteSpace: 'nowrap'
+      }}>
+        {fps} FPS {fps < 30 ? '⚠️' : '✓'}
+      </div>
+    </Html>
+  )
 }
 
 // Get terrain color based on elevation (same gradient as AirspaceCylinder)
@@ -432,6 +482,7 @@ export interface ThreeCanvasProps {
   routeBearing?: number // Radians, 0 = north, positive = clockwise
   totalDistanceKm?: number
   isFullscreen?: boolean
+  showFps?: boolean // Show FPS counter for performance verification
 }
 
 // Get color for airspace type
@@ -658,7 +709,7 @@ function AirspaceVolumes({ airspaces, maxElev }: { airspaces: PositionedAirspace
   )
 }
 
-export default function ThreeCanvasInner({ cells, minElev, maxElev, width, airspaces = [], routeBearing = 0, totalDistanceKm = 0, isFullscreen = false }: ThreeCanvasProps) {
+export default function ThreeCanvasInner({ cells, minElev, maxElev, width, airspaces = [], routeBearing = 0, totalDistanceKm = 0, isFullscreen = false, showFps = false }: ThreeCanvasProps) {
   const xExtent = 6.0
   
   // Calculate max altitude in meters for scale bar
@@ -791,7 +842,7 @@ export default function ThreeCanvasInner({ cells, minElev, maxElev, width, airsp
           <AirspaceVolumes airspaces={airspaces} maxElev={maxElev} />
         )}
         
-        <OrbitControls 
+        <OrbitControls
           enablePan={true}
           enableZoom={true}
           enableRotate={true}
@@ -810,6 +861,9 @@ export default function ThreeCanvasInner({ cells, minElev, maxElev, width, airsp
             RIGHT: 2    // THREE.MOUSE.PAN
           }}
         />
+
+        {/* FPS Monitor for performance verification */}
+        <FpsMonitor showFps={showFps} />
       </Canvas>
       </div>
       
