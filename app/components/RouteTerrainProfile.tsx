@@ -153,7 +153,7 @@ export default function RouteTerrainProfile({
     const [isLoading, setIsLoading] = useState(false)
     const [minElev, setMinElev] = useState(0)
     const [maxElev, setMaxElev] = useState(100)
-    const [localWidth, setLocalWidth] = useState(width)
+    const localWidth = width
     const [routeAirspaces, setRouteAirspaces] = useState<PositionedAirspace[]>([])
     
     // Use ref to avoid callback being a dependency in useEffect
@@ -202,27 +202,18 @@ export default function RouteTerrainProfile({
         }
         const totalDistKm = totalDist / 1000
 
-        // Progressive degradation: adjust sample interval based on route length
-        // Short routes (<50km): 250m interval for high detail
-        // Medium routes (50-100km): 500m interval
-        // Long routes (>100km): scale to keep ~200 samples along route
-        // Very long routes (>200km): scale to keep ~150 samples along route
-        let sampleInterval: number
-        let lateralSamples: number
-
-        if (totalDistKm < 50) {
-            sampleInterval = 250       // High detail for short routes
-            lateralSamples = 21        // Full lateral resolution
-        } else if (totalDistKm < 100) {
-            sampleInterval = 500       // Medium detail
-            lateralSamples = 15        // Reduced lateral samples
-        } else if (totalDistKm < 200) {
-            sampleInterval = Math.ceil(totalDist / 200)  // ~200 samples along route
-            lateralSamples = 11        // Moderate lateral resolution
-        } else {
-            sampleInterval = Math.ceil(totalDist / 150)  // ~150 samples for very long routes
-            lateralSamples = 7         // Minimal lateral resolution
-        }
+        // Square grid: 100m spacing both along-path and across width
+        // Lateral samples derived from corridor width to match the along-path spacing
+        // Cap at 1000 total points only for very long routes
+        const MAX_TOTAL_SAMPLES = 1000
+        const defaultInterval = 100 // meters
+        const widthMeters = localWidth * 1000
+        const lateralSamples = Math.max(3, Math.ceil(widthMeters / defaultInterval) + 1)
+        const alongPathSamples = Math.ceil(totalDist / defaultInterval)
+        const totalAtDefault = alongPathSamples * lateralSamples
+        const sampleInterval = totalAtDefault > MAX_TOTAL_SAMPLES
+            ? Math.ceil(totalDist / Math.floor(MAX_TOTAL_SAMPLES / lateralSamples))
+            : defaultInterval
 
         console.log('[RouteTerrainProfile] Route length:', totalDistKm.toFixed(1), 'km, sample interval:', sampleInterval, 'm, lateral samples:', lateralSamples)
 
@@ -353,16 +344,23 @@ export default function RouteTerrainProfile({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [gridSamplePoints, routeBearing, totalDistanceKm])
 
-    // Aggregate airspaces along the route
+    // Stable reference for airspaceData to avoid infinite re-render loops
+    // (parent passes allAirspaceData.flatMap(...) which creates a new array every render)
+    const airspaceDataRef = useRef(airspaceData)
+    airspaceDataRef.current = airspaceData
+    const airspaceDataLength = airspaceData.length
+
+    // Aggregate airspaces along the route (only re-run when points or airspace count changes)
     useEffect(() => {
-        if (points.length < 2 || airspaceData.length === 0) {
+        if (points.length < 2 || airspaceDataLength === 0) {
             setRouteAirspaces([])
             return
         }
 
+        const currentAirspaceData = airspaceDataRef.current
+
         // Track airspace positions along route: Map<airspaceId, {minProgress, maxProgress}>
         const airspacePositions = new Map<string, { airspace: AirspaceData; minProgress: number; maxProgress: number }>()
-        const sampleInterval = 500 // meters along path (finer resolution for better position tracking)
 
         // Calculate total route distance
         let totalRouteDist = 0
@@ -370,29 +368,36 @@ export default function RouteTerrainProfile({
             totalRouteDist += getDistanceMeters(points[i].lat, points[i].lon, points[i + 1].lat, points[i + 1].lon)
         }
 
+        // Use same sampling rules as terrain: 100m default, cap at ~200 samples for long routes
+        const MAX_AIRSPACE_SAMPLES = 200
+        const alongPathCount = Math.ceil(totalRouteDist / 100)
+        const sampleInterval = alongPathCount > MAX_AIRSPACE_SAMPLES
+            ? Math.ceil(totalRouteDist / MAX_AIRSPACE_SAMPLES)
+            : 100
+
         // Sample points along the route to find intersecting airspaces and track their positions
         let accumulatedDist = 0
         for (let i = 0; i < points.length - 1; i++) {
             const p1 = points[i]
             const p2 = points[i + 1]
             const segmentDist = getDistanceMeters(p1.lat, p1.lon, p2.lat, p2.lon)
-            
+
             const numSamples = Math.ceil(segmentDist / sampleInterval)
             for (let j = 0; j <= numSamples; j++) {
                 const t = j / numSamples
                 const sampleLat = p1.lat + (p2.lat - p1.lat) * t
                 const sampleLon = p1.lon + (p2.lon - p1.lon) * t
-                
+
                 // Calculate progress along route (0-1)
                 const currentDist = accumulatedDist + segmentDist * t
                 const progress = totalRouteDist > 0 ? currentDist / totalRouteDist : 0
-                
+
                 // Find airspaces at this sample point
                 const airspacesAtPoint = findAirspacesAtPoint(
                     { latitude: sampleLat, longitude: sampleLon },
-                    airspaceData
+                    currentAirspaceData
                 )
-                
+
                 // Track position for each airspace
                 for (const airspace of airspacesAtPoint) {
                     const existing = airspacePositions.get(airspace.id)
@@ -419,13 +424,16 @@ export default function RouteTerrainProfile({
             startProgress: minProgress,
             endProgress: maxProgress
         }))
-        
+
         setRouteAirspaces(positionedAirspaces)
-        // Notify parent of airspace update if we have elevation data
+    }, [points, airspaceDataLength])
+
+    // Notify parent when elevation data or airspaces change
+    useEffect(() => {
         if (onElevationDataChangeRef.current && gridCells.length > 0) {
-            onElevationDataChangeRef.current(gridCells, minElev, maxElev, positionedAirspaces, routeBearing, totalDistanceKm)
+            onElevationDataChangeRef.current(gridCells, minElev, maxElev, routeAirspaces, routeBearing, totalDistanceKm)
         }
-    }, [points, airspaceData, gridCells, minElev, maxElev, routeBearing, totalDistanceKm])
+    }, [gridCells, minElev, maxElev, routeAirspaces, routeBearing, totalDistanceKm])
 
     return (
         <div style={{
@@ -482,25 +490,6 @@ export default function RouteTerrainProfile({
 
             {!isLoading && gridCells.length > 0 && (
                 <>
-                    <div style={{ marginBottom: '16px' }}>
-                        <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px' }}>
-                            Terrain Width: {localWidth.toFixed(1)} km
-                        </label>
-                        <input
-                            type="range"
-                            min="0.5"
-                            max="10"
-                            step="0.5"
-                            value={localWidth}
-                            onChange={(e) => {
-                                const newWidth = parseFloat(e.target.value)
-                                setLocalWidth(newWidth)
-                                onWidthChange(newWidth)
-                            }}
-                            style={{ width: '100%' }}
-                        />
-                    </div>
-
                                         {/* 3D profile is now dynamically imported and rendered in SidePanel.tsx */}
                                         {typeof window !== 'undefined' && window.__RenderTerrainProfile3D &&
                                             window.__RenderTerrainProfile3D({
@@ -516,7 +505,6 @@ export default function RouteTerrainProfile({
                         color: '#9ca3af'
                     }}>
                         <p>Elevation Range: {Math.round(minElev)}m - {Math.round(maxElev)}m</p>
-                        <p>Grid Points: {gridCells.length}</p>
                     </div>
 
                     {routeAirspaces.length > 0 && (

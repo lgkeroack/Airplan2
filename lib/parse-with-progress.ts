@@ -15,7 +15,7 @@ export type ProgressCallback = (progress: ParseProgress) => void
 // Parse OpenAir file with progress tracking
 export async function parseOpenAirFileWithProgress(
   content: string,
-  source: 'US' | 'CA' | 'USER',
+  source: 'CA' | 'USER',
   fileName: string,
   onProgress?: ProgressCallback
 ): Promise<AirspaceData[]> {
@@ -73,7 +73,7 @@ export async function parseOpenAirFileWithProgress(
 
 // Load multiple files with progress tracking
 export async function loadAirspaceDataWithProgress(
-  files: Array<{ content: string; source: 'US' | 'CA' | 'USER'; name: string }>,
+  files: Array<{ content: string; source: 'CA' | 'USER'; name: string }>,
   onProgress?: ProgressCallback
 ): Promise<AirspaceData[]> {
   const allData: AirspaceData[] = []

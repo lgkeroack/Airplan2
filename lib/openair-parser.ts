@@ -46,7 +46,7 @@ function parseCoordinatePair(line: string): { latitude: number; longitude: numbe
 }
 
 // Parse OpenAir format file
-export function parseOpenAirFile(content: string, source: 'US' | 'CA' | 'USER' = 'US'): OpenAirAirspace[] {
+export function parseOpenAirFile(content: string, source: 'CA' | 'USER' = 'CA'): OpenAirAirspace[] {
   const lines = content.split('\n')
   const airspaces: OpenAirAirspace[] = []
   let currentAirspace: Partial<OpenAirAirspace> | null = null
@@ -296,7 +296,7 @@ export function parseOpenAirFile(content: string, source: 'US' | 'CA' | 'USER' =
 // Convert parsed OpenAir data to our API format
 export function convertToApiFormat(
   openAirData: OpenAirAirspace[],
-  source: 'US' | 'CA' | 'USER' = 'US'
+  source: 'CA' | 'USER' = 'CA'
 ): Array<{
   id: string
   notamNumber: string

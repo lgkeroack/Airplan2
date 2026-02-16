@@ -294,16 +294,6 @@ async function calculateSourceHash(): Promise<string> {
   const hash = createHash('sha256')
 
   try {
-    // Hash US file
-    const usFilePath = join(process.cwd(), 'data', 'allusa.txt')
-    const usContent = await readFile(usFilePath, 'utf-8')
-    hash.update('US:')
-    hash.update(usContent)
-  } catch (error) {
-    hash.update('US:missing')
-  }
-
-  try {
     // Hash Canadian file (fetch and hash)
     const response = await fetch(
       'https://soaringweb.org/Airspace/NA/CanAirspace318nolowE.txt',
@@ -390,16 +380,10 @@ async function loadConcatenatedData(): Promise<AirspaceData[] | null> {
 async function processBaseAirspaceData(): Promise<AirspaceData[]> {
   let allData: AirspaceData[] = []
 
-  serverLogger.log('Processing base airspace data (US + Canadian)...')
-  console.log('Processing base airspace data (US + Canadian)...')
+  serverLogger.log('Processing base airspace data (Canadian)...')
+  console.log('Processing base airspace data (Canadian)...')
 
   // Load raw data
-  serverLogger.log('Loading US airspace data...')
-  const usData = await loadUSAirspace()
-  serverLogger.log(`Loaded ${usData.length} US airspace entries`)
-  console.log(`Loaded ${usData.length} US airspace entries`)
-  allData = [...allData, ...usData]
-
   serverLogger.log('Loading Canadian airspace data...')
   const caData = await loadCanadianAirspace()
   serverLogger.log(`Loaded ${caData.length} Canadian airspace entries`)
@@ -459,28 +443,9 @@ async function loadCanadianAirspace(): Promise<AirspaceData[]> {
   }
 }
 
-// Load US airspace data from local file (server-side only)
-async function loadUSAirspace(): Promise<AirspaceData[]> {
-  try {
-    const filePath = join(process.cwd(), 'data', 'allusa.txt')
-    const content = await readFile(filePath, 'utf-8')
-    const parsed = parseOpenAirFile(content, 'US')
-    const converted = convertToApiFormat(parsed, 'US')
-
-    return converted
-  } catch (error: any) {
-    console.error('Error reading US airspace file:', error)
-    return []
-  }
-}
-
 // Load all airspace data (server-side only)
-export async function loadAirspaceData(country: 'US' | 'CA' | 'ALL' = 'ALL'): Promise<AirspaceData[]> {
+export async function loadAirspaceData(country: 'CA' | 'ALL' = 'ALL'): Promise<AirspaceData[]> {
   try {
-    // Collect metadata for built-in files
-    const usFilePath = join(process.cwd(), 'data', 'allusa.txt')
-    const usStats = await stat(usFilePath).catch(() => null)
-
     // Check if concatenated data exists
     const cachedData = await loadConcatenatedData()
 
@@ -490,24 +455,12 @@ export async function loadAirspaceData(country: 'US' | 'CA' | 'ALL' = 'ALL'): Pr
 
       // Inject current metadata into cached data since stats might change
       return cachedData.map(item => {
-        if (item.id.startsWith('US-')) {
-          return {
-            ...item,
-            metadata: {
-              fileName: 'allusa.txt',
-              fileSize: usStats?.size || 0,
-              lastModified: usStats?.mtime.toISOString() || new Date().toISOString(),
-              source: 'Built-in (US)'
-            }
-          }
-        }
         if (item.id.startsWith('CA-')) {
-          // Canada is remote, we don't have easy stat, use a fallback
           return {
             ...item,
             metadata: {
               fileName: 'CanAirspace318nolowE.txt',
-              fileSize: 0, // Remote size unknown without HEAD request
+              fileSize: 0,
               lastModified: new Date().toISOString(),
               source: 'Built-in (CA)'
             }
@@ -524,17 +477,6 @@ export async function loadAirspaceData(country: 'US' | 'CA' | 'ALL' = 'ALL'): Pr
 
     // Add metadata
     const dataWithMetadata = processedData.map(item => {
-      if (item.id.startsWith('US-')) {
-        return {
-          ...item,
-          metadata: {
-            fileName: 'allusa.txt',
-            fileSize: usStats?.size || 0,
-            lastModified: usStats?.mtime.toISOString() || new Date().toISOString(),
-            source: 'Built-in (US)'
-          }
-        }
-      }
       if (item.id.startsWith('CA-')) {
         return {
           ...item,

@@ -20,55 +20,6 @@ interface PositionedAirspace extends AirspaceData {
   endProgress: number   // 0-1, where along route this airspace ends
 }
 
-// FPS Monitor component for performance verification
-// Displays in development mode only to help verify 30fps target
-function FpsMonitor({ showFps = false }: { showFps?: boolean }) {
-  const [fps, setFps] = useState(60)
-  const frameTimesRef = useRef<number[]>([])
-  const lastTimeRef = useRef(performance.now())
-
-  useFrame(() => {
-    if (!showFps) return
-
-    const now = performance.now()
-    const delta = now - lastTimeRef.current
-    lastTimeRef.current = now
-
-    // Keep last 30 frame times for averaging
-    frameTimesRef.current.push(delta)
-    if (frameTimesRef.current.length > 30) {
-      frameTimesRef.current.shift()
-    }
-
-    // Calculate average FPS every 10 frames
-    if (frameTimesRef.current.length >= 10 && frameTimesRef.current.length % 10 === 0) {
-      const avgDelta = frameTimesRef.current.reduce((a, b) => a + b, 0) / frameTimesRef.current.length
-      setFps(Math.round(1000 / avgDelta))
-    }
-  })
-
-  if (!showFps) return null
-
-  // Display FPS counter in 3D space using Html overlay
-  const fpsColor = fps >= 30 ? '#22c55e' : fps >= 20 ? '#eab308' : '#ef4444'
-
-  return (
-    <Html position={[-2.5, 2, 0]} style={{ pointerEvents: 'none' }}>
-      <div style={{
-        background: 'rgba(0,0,0,0.6)',
-        color: fpsColor,
-        padding: '4px 8px',
-        borderRadius: '4px',
-        fontSize: '12px',
-        fontFamily: 'monospace',
-        fontWeight: 'bold',
-        whiteSpace: 'nowrap'
-      }}>
-        {fps} FPS {fps < 30 ? '⚠️' : '✓'}
-      </div>
-    </Html>
-  )
-}
 
 // Get terrain color based on elevation (same gradient as AirspaceCylinder)
 function getElevationColor(elevation: number, minElev: number, maxElev: number): string {
@@ -270,6 +221,110 @@ function TerrainMesh({ cells, minElev, maxElev, width }: { cells: ElevationGridC
     }
 
     if (vertices.length === 0 || indices.length === 0) return null
+
+    // Add side skirts that drop edges down to y=0 to enclose the terrain
+    // We need to collect edge vertices from the grid:
+    // - First row (front edge)
+    // - Last row (back edge)
+    // - First column of each row (left edge)
+    // - Last column of each row (right edge)
+    const allRows: { idx: number; x: number; z: number; y: number }[][] = []
+    {
+      let vOffset = 0
+      for (let i = 0; i < sorted.length; i++) {
+        const row = rows.get(sorted[i])!.sort((a, b) => a.distanceFromPath - b.distanceFromPath)
+        const rowVerts: { idx: number; x: number; z: number; y: number }[] = []
+        for (let j = 0; j < row.length; j++) {
+          const vi = vOffset + j
+          rowVerts.push({
+            idx: vi,
+            x: vertices[vi * 3],
+            y: vertices[vi * 3 + 1],
+            z: vertices[vi * 3 + 2]
+          })
+        }
+        allRows.push(rowVerts)
+        vOffset += row.length
+      }
+    }
+
+    const skirtColor = parseColor(getElevationColor(minElev, minElev, maxElev))
+
+    // Helper: add a skirt quad between two top-edge vertices dropping to y=0
+    const addSkirtQuad = (x1: number, y1: number, z1: number, x2: number, y2: number, z2: number, flipWinding: boolean) => {
+      const base = vertices.length / 3
+      // top-left, bottom-left, top-right, bottom-right
+      vertices.push(x1, y1, z1)
+      colors.push(...skirtColor)
+      vertices.push(x1, 0, z1)
+      colors.push(...skirtColor)
+      vertices.push(x2, y2, z2)
+      colors.push(...skirtColor)
+      vertices.push(x2, 0, z2)
+      colors.push(...skirtColor)
+
+      if (flipWinding) {
+        indices.push(base, base + 2, base + 1)
+        indices.push(base + 1, base + 2, base + 3)
+      } else {
+        indices.push(base, base + 1, base + 2)
+        indices.push(base + 1, base + 3, base + 2)
+      }
+    }
+
+    // Front edge (first row) - faces forward (-X direction)
+    if (allRows.length > 0) {
+      const frontRow = allRows[0]
+      for (let j = 0; j < frontRow.length - 1; j++) {
+        addSkirtQuad(frontRow[j].x, frontRow[j].y, frontRow[j].z, frontRow[j + 1].x, frontRow[j + 1].y, frontRow[j + 1].z, true)
+      }
+    }
+
+    // Back edge (last row) - faces backward (+X direction)
+    if (allRows.length > 1) {
+      const backRow = allRows[allRows.length - 1]
+      for (let j = 0; j < backRow.length - 1; j++) {
+        addSkirtQuad(backRow[j].x, backRow[j].y, backRow[j].z, backRow[j + 1].x, backRow[j + 1].y, backRow[j + 1].z, false)
+      }
+    }
+
+    // Left edge (first column of each row) - faces left (-Z direction)
+    for (let i = 0; i < allRows.length - 1; i++) {
+      if (allRows[i].length > 0 && allRows[i + 1].length > 0) {
+        const v1 = allRows[i][0]
+        const v2 = allRows[i + 1][0]
+        addSkirtQuad(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z, false)
+      }
+    }
+
+    // Right edge (last column of each row) - faces right (+Z direction)
+    for (let i = 0; i < allRows.length - 1; i++) {
+      const row1 = allRows[i]
+      const row2 = allRows[i + 1]
+      if (row1.length > 0 && row2.length > 0) {
+        const v1 = row1[row1.length - 1]
+        const v2 = row2[row2.length - 1]
+        addSkirtQuad(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z, true)
+      }
+    }
+
+    // Bottom face at y=0
+    if (allRows.length >= 2) {
+      const corners = [
+        allRows[0][0],
+        allRows[0][allRows[0].length - 1],
+        allRows[allRows.length - 1][0],
+        allRows[allRows.length - 1][allRows[allRows.length - 1].length - 1]
+      ]
+      const base = vertices.length / 3
+      for (const c of corners) {
+        vertices.push(c.x, 0, c.z)
+        colors.push(...skirtColor)
+      }
+      // Two triangles for bottom quad (winding faces down)
+      indices.push(base, base + 1, base + 2)
+      indices.push(base + 1, base + 3, base + 2)
+    }
 
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices), 3))
     geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3))
@@ -482,7 +537,6 @@ export interface ThreeCanvasProps {
   routeBearing?: number // Radians, 0 = north, positive = clockwise
   totalDistanceKm?: number
   isFullscreen?: boolean
-  showFps?: boolean // Show FPS counter for performance verification
 }
 
 // Get color for airspace type
@@ -709,7 +763,7 @@ function AirspaceVolumes({ airspaces, maxElev }: { airspaces: PositionedAirspace
   )
 }
 
-export default function ThreeCanvasInner({ cells, minElev, maxElev, width, airspaces = [], routeBearing = 0, totalDistanceKm = 0, isFullscreen = false, showFps = false }: ThreeCanvasProps) {
+export default function ThreeCanvasInner({ cells, minElev, maxElev, width, airspaces = [], routeBearing = 0, totalDistanceKm = 0, isFullscreen = false }: ThreeCanvasProps) {
   const xExtent = 6.0
   
   // Calculate max altitude in meters for scale bar
@@ -810,12 +864,12 @@ export default function ThreeCanvasInner({ cells, minElev, maxElev, width, airsp
     <div style={{ position: 'relative', width: '100%', height: isFullscreen ? '100%' : '400px', display: 'flex' }}>
       {/* 3D Canvas */}
       <div style={{ flex: 1, position: 'relative', minWidth: 0 }}>
-        <Canvas 
-          style={{ 
-            width: '100%', 
-            height: '100%', 
-            borderRadius: isFullscreen ? '0' : '8px', 
-            background: 'linear-gradient(to bottom, #e0f2fe, #f0f9ff)' 
+        <Canvas
+          style={{
+            width: '100%',
+            height: '100%',
+            borderRadius: isFullscreen ? '0' : '8px',
+            background: 'linear-gradient(to bottom, #e0f2fe, #f0f9ff)'
           }} 
           camera={{ position: [0, 4, 10], fov: 50, near: 0.1, far: 100 }}
           dpr={1}
@@ -862,8 +916,6 @@ export default function ThreeCanvasInner({ cells, minElev, maxElev, width, airsp
           }}
         />
 
-        {/* FPS Monitor for performance verification */}
-        <FpsMonitor showFps={showFps} />
       </Canvas>
       </div>
       

@@ -850,31 +850,6 @@ export default function SidePanel({
                       </div>
                     </div>
 
-                    {/* Fetch Radius */}
-                    <div style={{ marginTop: '24px' }}>
-                      <div style={{ padding: '12px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                          <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>
-                            Fetch Radius
-                          </label>
-                          <span style={{ fontSize: '12px', fontWeight: '500', color: '#6b7280', backgroundColor: '#e5e7eb', padding: '2px 6px', borderRadius: '4px' }}>
-                            {fetchRadius} km
-                          </span>
-                        </div>
-                        <input
-                          type="range"
-                          min="1"
-                          max="25"
-                          step="0.5"
-                          value={fetchRadius}
-                          onChange={(e) => setFetchRadius(parseFloat(e.target.value))}
-                          style={{ width: '100%', accentColor: '#3b82f6', cursor: 'pointer' }}
-                        />
-                        <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '6px' }}>
-                          Search radius for finding nearby airspaces (1-25 km).
-                        </p>
-                      </div>
-                    </div>
                   </div>
                 )}
 
@@ -1003,7 +978,7 @@ export default function SidePanel({
                 {activeTab === 'aircolumn' && (
                   <div>
                     {selectedRoute ? (
-                      <div style={{ border: '4px solid yellow', boxShadow: '0 0 10px yellow', borderRadius: '8px', padding: '12px' }}>
+                      <div style={{ borderRadius: '8px', padding: '12px' }}>
                         <div style={{ marginBottom: '16px', fontSize: '14px', color: '#6b7280' }}>
                           <div><strong>Route Airspace & Terrain</strong></div>
                         </div>

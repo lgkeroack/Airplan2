@@ -506,6 +506,18 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         }
         leafletMapRef.current = null
       }
+      mapRef.current = null
+
+      // Clear Leaflet's internal state from the DOM container so it can be re-initialized
+      if (mapContainerRef.current) {
+        const wrapper = mapContainerRef.current
+        // Remove any Leaflet-created child elements
+        while (wrapper.firstChild) {
+          wrapper.removeChild(wrapper.firstChild)
+        }
+        // Remove Leaflet's internal _leaflet_id property
+        delete (wrapper as any)._leaflet_id
+      }
 
       // Generate a new container key for next mount
       setContainerKey(`leaflet-${Math.random().toString(36).slice(2)}`)
@@ -633,10 +645,10 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     lon: number
   } | null>(null)
 
-  // Initialize fetchRadius from localStorage, default to 1km
+  // Initialize fetchRadius from sessionStorage, default to 5km
   const [fetchRadius, setFetchRadius] = useState<number>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('airspace-fetch-radius')
+      const saved = sessionStorage.getItem('airspace-fetch-radius')
       if (saved) {
         const parsed = parseFloat(saved)
         if (!isNaN(parsed) && parsed >= 1 && parsed <= 25) {
@@ -644,13 +656,13 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
         }
       }
     }
-    return 1
+    return 5
   })
 
-  // Persist fetchRadius to localStorage when it changes
+  // Persist fetchRadius to sessionStorage when it changes
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('airspace-fetch-radius', fetchRadius.toString())
+      sessionStorage.setItem('airspace-fetch-radius', fetchRadius.toString())
     }
   }, [fetchRadius])
 
@@ -1568,27 +1580,6 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
                   </div>
                 </div>
 
-                {/* Radius Slider */}
-                <div style={{ padding: '10px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151' }}>
-                      Search Radius
-                    </label>
-                    <span style={{ fontSize: '11px', fontWeight: '500', color: '#6b7280', backgroundColor: '#e5e7eb', padding: '2px 6px', borderRadius: '4px' }}>
-                      {fetchRadius} km
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1"
-                    max="25"
-                    step="0.5"
-                    value={fetchRadius}
-                    onChange={(e) => setFetchRadius(parseFloat(e.target.value))}
-                    style={{ width: '100%', accentColor: '#3b82f6', cursor: 'pointer' }}
-                  />
-                </div>
-
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <button
                     onClick={(e) => {
@@ -1745,6 +1736,28 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
               fontWeight: 500,
             }}>
               {contextMenu.lat.toFixed(5)}, {contextMenu.lon.toFixed(5)}
+            </div>
+
+            {/* Radius Slider */}
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid #e5e7eb' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151' }}>
+                  Fetch Radius
+                </label>
+                <span style={{ fontSize: '11px', fontWeight: '500', color: '#6b7280', backgroundColor: '#e5e7eb', padding: '2px 6px', borderRadius: '4px' }}>
+                  {fetchRadius} km
+                </span>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="25"
+                step="0.5"
+                value={fetchRadius}
+                onChange={(e) => setFetchRadius(parseFloat(e.target.value))}
+                onClick={(e) => e.stopPropagation()}
+                style={{ width: '100%', accentColor: '#3b82f6', cursor: 'pointer' }}
+              />
             </div>
 
             {/* Menu options */}

@@ -87,7 +87,7 @@ export default function Home() {
     <ClientErrorCatcher>
       <PageDebugger />
       <main style={{ position: 'relative', height: '100vh', width: '100vw', overflow: 'hidden', backgroundColor: '#111827' }}>
-        <BannerAd />
+        {/* <BannerAd /> */}
         <Walkthrough />
         <ErrorBoundary>
           <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#fff' }}>Loading map...</div>}>
