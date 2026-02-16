@@ -280,13 +280,8 @@ function RoutePath({ cells, minElev, maxElev, width }: { cells: ElevationGridCel
       centerElevations.push(centerCell.elevation ?? minElev)
     }
     
-    // Smooth the center elevations for a smoother path line (1 pass for subtle smoothing)
+    // No smoothing - preserve terrain detail for route path line
     const smoothedElevations = [...centerElevations]
-    for (let pass = 0; pass < 1; pass++) {
-      for (let i = 1; i < smoothedElevations.length - 1; i++) {
-        smoothedElevations[i] = (smoothedElevations[i-1] + smoothedElevations[i] + smoothedElevations[i+1]) / 3
-      }
-    }
     
     for (let i = 0; i < sorted.length; i++) {
       const key = sorted[i]
