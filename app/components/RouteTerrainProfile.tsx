@@ -204,13 +204,13 @@ export default function RouteTerrainProfile({
             totalDist += getDistanceMeters(points[i].lat, points[i].lon, points[i + 1].lat, points[i + 1].lon)
         }
         
-        // If route is very long, increase sample interval to keep total samples under 200
-        // (200 * 11 lateral samples = 2200 samples max, which batches into 44 batches of 50)
-        if (totalDist > 200000) {
-            sampleInterval = Math.ceil(totalDist / 200) // About 200 samples along the route
+        // If route is very long, increase sample interval to keep total samples manageable
+        // (100 longitudinal * 21 lateral samples = 2100 samples max)
+        if (totalDist > 100000) {
+            sampleInterval = Math.ceil(totalDist / 100) // About 100 samples along the route for long routes
         }
-        
-        const lateralSamples = 11 // 11 samples across width (including center)
+
+        const lateralSamples = 21 // 21 samples across width for smoother cross-route terrain
 
         // Iterate along the path
         for (let i = 0; i < points.length - 1; i++) {
