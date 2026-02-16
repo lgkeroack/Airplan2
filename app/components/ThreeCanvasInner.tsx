@@ -131,8 +131,8 @@ function TerrainMesh({ cells, minElev, maxElev, width }: { cells: ElevationGridC
   const geometry = useMemo(() => {
     if (!cells || cells.length === 0) return null
     
-    // Apply smoothing to reduce jagged terrain (1 pass for subtle smoothing)
-    const smoothedCells = smoothElevationGrid(cells, 1)
+    // No smoothing - preserve terrain detail and variation
+    const smoothedCells = smoothElevationGrid(cells, 0)
 
     const geo = new THREE.BufferGeometry()
     const vertices: number[] = []
