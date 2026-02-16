@@ -1568,6 +1568,27 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
                   </div>
                 </div>
 
+                {/* Radius Slider */}
+                <div style={{ padding: '10px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151' }}>
+                      Search Radius
+                    </label>
+                    <span style={{ fontSize: '11px', fontWeight: '500', color: '#6b7280', backgroundColor: '#e5e7eb', padding: '2px 6px', borderRadius: '4px' }}>
+                      {fetchRadius} km
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="25"
+                    step="0.5"
+                    value={fetchRadius}
+                    onChange={(e) => setFetchRadius(parseFloat(e.target.value))}
+                    style={{ width: '100%', accentColor: '#3b82f6', cursor: 'pointer' }}
+                  />
+                </div>
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <button
                     onClick={(e) => {
