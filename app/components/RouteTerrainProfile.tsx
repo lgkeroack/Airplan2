@@ -196,7 +196,7 @@ export default function RouteTerrainProfile({
         const samples: ElevationGridCell[] = []
         
         // Adaptive sample interval: larger routes can use larger intervals
-        let sampleInterval = 1000 // Default 1km
+        let sampleInterval = 500 // Default 500m (matches 3D terrain detail)
         
         // Calculate total route distance
         let totalDist = 0
