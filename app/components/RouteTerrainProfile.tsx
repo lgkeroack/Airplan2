@@ -194,23 +194,37 @@ export default function RouteTerrainProfile({
 
         console.log('[RouteTerrainProfile] Generating grid for', points.length, 'route points, width=', localWidth)
         const samples: ElevationGridCell[] = []
-        
-        // Adaptive sample interval: larger routes can use larger intervals
-        let sampleInterval = 1000 // Default 1km
-        
-        // Calculate total route distance
+
+        // Calculate total route distance first
         let totalDist = 0
         for (let i = 0; i < points.length - 1; i++) {
             totalDist += getDistanceMeters(points[i].lat, points[i].lon, points[i + 1].lat, points[i + 1].lon)
         }
-        
-        // If route is very long, increase sample interval to keep total samples under 200
-        // (200 * 11 lateral samples = 2200 samples max, which batches into 44 batches of 50)
-        if (totalDist > 200000) {
-            sampleInterval = Math.ceil(totalDist / 200) // About 200 samples along the route
+        const totalDistKm = totalDist / 1000
+
+        // Progressive degradation: adjust sample interval based on route length
+        // Short routes (<50km): 250m interval for high detail
+        // Medium routes (50-100km): 500m interval
+        // Long routes (>100km): scale to keep ~200 samples along route
+        // Very long routes (>200km): scale to keep ~150 samples along route
+        let sampleInterval: number
+        let lateralSamples: number
+
+        if (totalDistKm < 50) {
+            sampleInterval = 250       // High detail for short routes
+            lateralSamples = 21        // Full lateral resolution
+        } else if (totalDistKm < 100) {
+            sampleInterval = 500       // Medium detail
+            lateralSamples = 15        // Reduced lateral samples
+        } else if (totalDistKm < 200) {
+            sampleInterval = Math.ceil(totalDist / 200)  // ~200 samples along route
+            lateralSamples = 11        // Moderate lateral resolution
+        } else {
+            sampleInterval = Math.ceil(totalDist / 150)  // ~150 samples for very long routes
+            lateralSamples = 7         // Minimal lateral resolution
         }
-        
-        const lateralSamples = 11 // 11 samples across width (including center)
+
+        console.log('[RouteTerrainProfile] Route length:', totalDistKm.toFixed(1), 'km, sample interval:', sampleInterval, 'm, lateral samples:', lateralSamples)
 
         // Iterate along the path
         for (let i = 0; i < points.length - 1; i++) {

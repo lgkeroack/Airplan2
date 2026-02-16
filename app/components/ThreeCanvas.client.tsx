@@ -52,19 +52,21 @@ interface ThreeCanvasProps {
   routeBearing?: number
   totalDistanceKm?: number
   isFullscreen?: boolean
+  showFps?: boolean // Show FPS counter for performance verification
 }
 
-export default function ThreeCanvas({ cells, minElev, maxElev, width, airspaces = [], routeBearing = 0, totalDistanceKm = 0, isFullscreen = false }: ThreeCanvasProps) {
+export default function ThreeCanvas({ cells, minElev, maxElev, width, airspaces = [], routeBearing = 0, totalDistanceKm = 0, isFullscreen = false, showFps = false }: ThreeCanvasProps) {
   return (
-    <ThreeCanvasInner 
-      cells={cells} 
-      minElev={minElev} 
-      maxElev={maxElev} 
-      width={width} 
+    <ThreeCanvasInner
+      cells={cells}
+      minElev={minElev}
+      maxElev={maxElev}
+      width={width}
       airspaces={airspaces}
       routeBearing={routeBearing}
       totalDistanceKm={totalDistanceKm}
       isFullscreen={isFullscreen}
+      showFps={showFps}
     />
   )
 }
