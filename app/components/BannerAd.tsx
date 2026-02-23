@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 
+const AD_CLIENT = 'ca-pub-2383569184641114'
+
 // Phase 1: hosting message (5s) → Phase 2: ad (20s) → Phase 3: thank you (5s) → collapse
 const PHASE_DURATIONS = { message: 5, ad: 20, thanks: 5 } as const
 const TOTAL_DURATION = PHASE_DURATIONS.message + PHASE_DURATIONS.ad + PHASE_DURATIONS.thanks
@@ -12,13 +14,29 @@ export default function BannerAd() {
   const [phase, setPhase] = useState<Phase>('message')
   const [elapsed, setElapsed] = useState(0)
   const [adFailed, setAdFailed] = useState(false)
+  const [scriptLoaded, setScriptLoaded] = useState(false)
   const adPushed = useRef(false)
   const adInsRef = useRef<HTMLModElement>(null)
   const startTime = useRef(Date.now())
 
-  // Push the AdSense ad once during ad phase, then check if it loaded
+  // Load the AdSense script on mount (only once, only on this component)
   useEffect(() => {
-    if (phase !== 'ad' || adPushed.current) return
+    if (document.querySelector(`script[src*="adsbygoogle"]`)) {
+      setScriptLoaded(true)
+      return
+    }
+    const script = document.createElement('script')
+    script.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${AD_CLIENT}`
+    script.async = true
+    script.crossOrigin = 'anonymous'
+    script.onload = () => setScriptLoaded(true)
+    script.onerror = () => setAdFailed(true)
+    document.head.appendChild(script)
+  }, [])
+
+  // Push the AdSense ad once during ad phase after script is loaded
+  useEffect(() => {
+    if (phase !== 'ad' || adPushed.current || !scriptLoaded) return
     adPushed.current = true
     try {
       ((window as any).adsbygoogle = (window as any).adsbygoogle || []).push({})
@@ -35,7 +53,7 @@ export default function BannerAd() {
       }
     }, 2000)
     return () => clearTimeout(check)
-  }, [phase])
+  }, [phase, scriptLoaded])
 
   // Single timer driving everything
   useEffect(() => {

@@ -71,7 +71,12 @@ async function MapWithData() {
     serverLogger.log(`[Server] MapWithData: Data loaded, rendering map with ${airspaceData.length} entries`)
     console.log('[Server] MapWithData: Data loaded, rendering map with', airspaceData.length, 'entries')
     
-    return <AirspaceMapLoader initialData={airspaceData} />
+    return (
+      <>
+        <BannerAd />
+        <AirspaceMapLoader initialData={airspaceData} />
+      </>
+    )
   } catch (error: any) {
     serverLogger.error('[Server] MapWithData: Error caught', error)
     console.error('[Server] MapWithData: Error caught:', error)
@@ -87,7 +92,6 @@ export default function Home() {
     <ClientErrorCatcher>
       <PageDebugger />
       <main style={{ position: 'relative', height: '100vh', width: '100vw', overflow: 'hidden', backgroundColor: '#111827' }}>
-        {/* <BannerAd /> */}
         <Walkthrough />
         <ErrorBoundary>
           <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#fff' }}>Loading map...</div>}>
@@ -95,6 +99,54 @@ export default function Home() {
           </Suspense>
         </ErrorBoundary>
         <ConsoleLogger />
+
+        {/* SEO content — visible to crawlers, positioned off-screen for map UX */}
+        <div
+          style={{
+            position: 'absolute',
+            left: '-9999px',
+            width: '1px',
+            height: '1px',
+            overflow: 'hidden',
+          }}
+          aria-hidden="false"
+        >
+          <h1>Airplan — Interactive Airspace Visualization for Pilots</h1>
+          <p>
+            Airplan is a free, interactive airspace visualization tool built for
+            pilots, student pilots, and aviation enthusiasts. Explore controlled
+            and uncontrolled airspace on a detailed topographic map of the United
+            States. Click any location to retrieve the full vertical air column
+            — from surface-level Class D and Class C shelves up to Class A
+            airspace at FL180 and above.
+          </p>
+          <h2>Features</h2>
+          <ul>
+            <li>Click-to-query airspace at any point on the map</li>
+            <li>3D air-column visualization showing floor and ceiling altitudes</li>
+            <li>Color-coded airspace classes (B, C, D, E, and restricted areas)</li>
+            <li>Route planning with terrain profile and airspace intersection warnings</li>
+            <li>Topographic base map with elevation data</li>
+            <li>Thermal soaring data overlay for glider pilots</li>
+          </ul>
+          <h2>How It Works</h2>
+          <p>
+            Airplan parses official FAA airspace definition files and renders
+            them as interactive 3D cylinders on a Mapbox-powered topographic
+            map. When you click a location, the app queries the airspace
+            database and displays a vertical cross-section of every airspace
+            layer above that point, helping you understand what clearances or
+            communications are required before entering.
+          </p>
+          <h2>Who Is Airplan For?</h2>
+          <p>
+            Whether you are a VFR student pilot learning about airspace
+            classifications, an instrument-rated pilot planning a cross-country
+            route, or a drone operator checking restricted areas, Airplan gives
+            you an intuitive, visual way to understand the national airspace
+            system.
+          </p>
+        </div>
       </main>
     </ClientErrorCatcher>
   )

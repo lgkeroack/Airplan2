@@ -4,8 +4,24 @@ import { Analytics } from '@vercel/analytics/next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Airplan - Airspace Visualization',
-  description: 'Airplan helps pilots visualize airspace data on topographic maps. Explore air columns, plan routes, and understand controlled airspace.',
+  title: {
+    default: 'Airplan — Interactive Airspace Visualization for Pilots',
+    template: '%s — Airplan',
+  },
+  description:
+    'Airplan is a free interactive airspace visualization tool for pilots. Explore FAA airspace classes on a topographic map, view 3D air columns, plan routes with terrain profiles, and understand controlled airspace.',
+  keywords: [
+    'airspace visualization',
+    'pilot tools',
+    'FAA airspace',
+    'VFR planning',
+    'airspace map',
+    'Class B airspace',
+    'Class C airspace',
+    'flight planning',
+    'aviation',
+    'topographic map',
+  ],
   icons: {
     icon: '/airplan-icon.svg',
   },
@@ -18,13 +34,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <head>
-        <script
-          async
-          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2383569184641114"
-          crossOrigin="anonymous"
-        />
-      </head>
+      <head />
       <body style={{ margin: 0, padding: 0, minHeight: '100vh' }}>
         {children}
         <Analytics />
