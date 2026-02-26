@@ -5,7 +5,6 @@ import ClientErrorCatcher from './components/ClientErrorCatcher'
 import ConsoleLogger from './components/ConsoleLogger'
 import PageDebugger from './components/PageDebugger'
 import AirspaceMapLoader from './components/AirspaceMapLoader'
-import BannerAd from './components/BannerAd'
 import Walkthrough from './components/Walkthrough'
 import { serverLogger } from '@/lib/server-logger'
 
@@ -71,12 +70,7 @@ async function MapWithData() {
     serverLogger.log(`[Server] MapWithData: Data loaded, rendering map with ${airspaceData.length} entries`)
     console.log('[Server] MapWithData: Data loaded, rendering map with', airspaceData.length, 'entries')
     
-    return (
-      <>
-        <BannerAd />
-        <AirspaceMapLoader initialData={airspaceData} />
-      </>
-    )
+    return <AirspaceMapLoader initialData={airspaceData} />
   } catch (error: any) {
     serverLogger.error('[Server] MapWithData: Error caught', error)
     console.error('[Server] MapWithData: Error caught:', error)
