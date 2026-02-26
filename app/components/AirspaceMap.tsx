@@ -9,7 +9,7 @@ import { findAirspacesAtPoint, findAirspacesNearby } from '@/lib/point-in-airspa
 
 import dynamic from 'next/dynamic'
 import RouteBuilderUI from './RouteBuilderUI'
-import type { AirspaceData } from '@/lib/types'
+import type { AirspaceData, DeeplinkParams } from '@/lib/types'
 import { validateOpenAirFile } from '@/lib/validate-openair'
 
 const RouteOverlay = dynamic(() => import('./RouteOverlay'), { ssr: false })
@@ -471,9 +471,10 @@ function getFillOpacity(type: string): number {
 
 interface AirspaceMapProps {
   initialData: AirspaceData[]
+  deeplinkParams?: DeeplinkParams
 }
 
-export default function AirspaceMap({ initialData }: AirspaceMapProps) {
+export default function AirspaceMap({ initialData, deeplinkParams }: AirspaceMapProps) {
   // Use a unique ID to track this instance
   const instanceId = useId()
   const mapContainerRef = useRef<HTMLDivElement>(null)
@@ -625,8 +626,10 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
   // Start with side panel closed and no active tab; center on Squamish, BC
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [sidePanelActiveTab, setSidePanelActiveTab] = useState<'layers' | 'aircolumn' | 'search' | null>(null)
-  const [mapCenter, setMapCenter] = useState<LatLngExpression>([49.7016, -123.1558])
-  const [mapZoom, setMapZoom] = useState(10)
+  const [mapCenter, setMapCenter] = useState<LatLngExpression>(
+    deeplinkParams ? [deeplinkParams.lat, deeplinkParams.lon] : [49.7016, -123.1558]
+  )
+  const [mapZoom, setMapZoom] = useState(deeplinkParams ? 12 : 10)
   const mapRef = useRef<LeafletMap | null>(null)
   const [clickedPoint, setClickedPoint] = useState<{ lat: number; lon: number } | null>(null)
   const [mapBounds, setMapBounds] = useState<{ north: number; south: number; east: number; west: number } | null>(null)
@@ -645,8 +648,9 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
     lon: number
   } | null>(null)
 
-  // Initialize fetchRadius from sessionStorage, default to 5km
+  // Initialize fetchRadius from sessionStorage, default to 5km (deeplink overrides to 10km)
   const [fetchRadius, setFetchRadius] = useState<number>(() => {
+    if (deeplinkParams) return 10
     if (typeof window !== 'undefined') {
       const saved = sessionStorage.getItem('airspace-fetch-radius')
       if (saved) {
@@ -888,6 +892,44 @@ export default function AirspaceMap({ initialData }: AirspaceMapProps) {
       .catch(err => console.error('Elevation fetch error:', err))
       .finally(() => setIsElevationLoading(false))
   }, [contextMenu, fetchRadius, allAirspaces])
+
+  // Auto-trigger retrieve airspace from deeplink URL params
+  const deeplinkProcessedRef = useRef(false)
+  useEffect(() => {
+    if (!deeplinkParams || !showMap || deeplinkProcessedRef.current) return
+    if (allAirspaces.length === 0) return
+
+    deeplinkProcessedRef.current = true
+    const { lat, lon } = deeplinkParams
+
+    // Center map on deeplink coordinates
+    if (mapRef.current) {
+      mapRef.current.setView([lat, lon], 12)
+    }
+
+    // Set clicked point to drive side panel airspace computation
+    setClickedPoint({ lat, lon })
+
+    // Open side panel with air column tab
+    setIsPanelOpen(true)
+    setSidePanelActiveTab('aircolumn')
+
+    // Reset selection state
+    setSelectedAirspaceId(null)
+    setIsElevationLoading(true)
+    setElevation(null)
+
+    // Fetch elevation for deeplink point
+    fetch(`https://api.open-elevation.com/api/v1/lookup?locations=${lat},${lon}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.results?.[0]) {
+          setElevation(Math.round(data.results[0].elevation))
+        }
+      })
+      .catch(err => console.error('Elevation fetch error:', err))
+      .finally(() => setIsElevationLoading(false))
+  }, [deeplinkParams, showMap, allAirspaces])
 
   // Handle "Start Route" from context menu
   const handleStartRouteFromMenu = useCallback(() => {

@@ -1,3 +1,8 @@
+export interface DeeplinkParams {
+    lat: number
+    lon: number
+}
+
 export interface AirspaceData {
     id: string
     notamNumber: string
