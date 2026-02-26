@@ -1409,14 +1409,14 @@ export default function SidePanel({
                         color: '#6b7280',
                         lineHeight: '1.6'
                       }}>
-                        Airplan lets you visualize airspace data in 3D, and makes complex airspaces simple. All credits go to{' '}
+                        Airplan lets you visualize airspace data in 3D, and makes complex airspaces simple.{' '}
                         <a
                           href="https://gabs.ventures"
                           target="_blank"
                           rel="noopener noreferrer"
                           style={{ color: '#3b82f6', textDecoration: 'underline' }}
                         >
-                          this guy
+                          Another venture by gabs
                         </a>.
                       </p>
                       <p style={{
